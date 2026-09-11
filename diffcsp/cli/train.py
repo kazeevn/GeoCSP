@@ -129,6 +129,7 @@ def train(
     train_csv: str = "data/mp-20/train.csv",
     test_csv: str | None = "data/mp-20/test.csv",
     model_type: str = "orb",
+    augment_viewpoint: bool = False,
     orb_model: str = "orb-v3",
     mock_orb: bool = False,
     use_orb_node_features: bool = True,
@@ -208,11 +209,14 @@ def train(
             print(f"Frozen params:    {counts['frozen']:,}")
     elif model_type in ("wyckoff", "asymm"):
         model = WyckoffDiffusion(
-            device=dev, decoder=WyckoffCSPNet(hidden_dim=arch_h, num_layers=arch_l)
+            device=dev,
+            decoder=WyckoffCSPNet(hidden_dim=arch_h, num_layers=arch_l),
+            augment_viewpoint=augment_viewpoint,
         ).to(dev)
         params_to_train = list(model.parameters())
         if is_main:
             print(f"WyckoffCSPNet: hidden_dim={arch_h} num_layers={arch_l}")
+            print(f"viewpoint augmentation: {'ON' if augment_viewpoint else 'off'}")
             print(f"Total params: {sum(p.numel() for p in params_to_train):,}")
     else:
         model = CSPDiffusion(
@@ -567,6 +571,9 @@ def main() -> None:
     parser.add_argument("--train_csv", type=str, default="data/mp-20/train.csv", help="Path to training CSV")
     parser.add_argument("--test_csv", type=str, default="data/mp-20/test.csv", help="Path to test CSV")
     parser.add_argument("--model", type=str, choices=["orb", "cspnet", "wyckoff", "asymm"], default="orb", help="Model backbone")
+    parser.add_argument("--augment-viewpoint", action="store_true",
+                        help="wyckoff/asymm only: randomise which orbit member is the anchor "
+                             "each step (docs/asymmetric-unit-deficit.md section 7)")
     parser.add_argument(
         "--orb_model",
         type=str,
@@ -657,6 +664,7 @@ def main() -> None:
         train_csv=args.train_csv,
         test_csv=args.test_csv,
         model_type=args.model,
+        augment_viewpoint=args.augment_viewpoint,
         orb_model=args.orb_model,
         mock_orb=args.mock_orb,
         use_orb_node_features=args.use_orb_node_features,

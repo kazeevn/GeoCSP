@@ -40,15 +40,60 @@ class WyckoffDiffusion(nn.Module):
         beta_scheduler_mode: str = "cosine",
         sigma_begin: float = 0.005,
         sigma_end: float = 0.5,
+        augment_viewpoint: bool = False,
     ) -> None:
         super().__init__()
         self.device = torch.device(device)
         self.time_dim = time_dim
+        self.augment_viewpoint = augment_viewpoint
         self.decoder = decoder if decoder is not None else WyckoffCSPNet()
         self.beta_scheduler = BetaScheduler(timesteps, beta_scheduler_mode)
         self.sigma_scheduler = SigmaScheduler(timesteps, sigma_begin, sigma_end)
         self.time_embedding = SinusoidalTimeEmbeddings(time_dim)
         self.crystal_family = CrystalFamily()
+
+    def _sample_viewpoint(
+        self,
+        batch: Any,
+        inverse_site_map: torch.Tensor,
+        input_site_coords: torch.Tensor,
+        input_full_coords: torch.Tensor,
+        site_P: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Draws a random orbit member per site to act as that site's viewpoint.
+
+        Returns the edge reference positions and the output projectors. For a site
+        whose chosen member is ``r``, the head's prediction comes out in ``r``'s frame
+        and is mapped back with ``pinv(R_r)`` before being projected onto the canonical
+        tangent space, so the target never has to move.
+
+        Sites whose canonical projector is oblique are left at their canonical anchor.
+        ``pinv(R_r) R_r`` is the orthogonal projector onto the *row* space of ``R_r``,
+        which equals the tangent space only when the projector is symmetric; on the
+        4.9% of sites where it is not (docs/asymmetric-unit-deficit.md §5.1) the
+        map-back is not an inverse and would corrupt the target. Those are DoF 1-2
+        special positions in trigonal and hexagonal groups, and 1.1% of the DoF >= 9
+        structures that carry the deficit.
+        """
+        n_sites = site_P.shape[0]
+        multiplicity = torch.bincount(inverse_site_map, minlength=n_sites)
+        # order[start[k] + i] is the i-th atom of orbit k
+        order = torch.argsort(inverse_site_map, stable=True)
+        start = torch.cumsum(
+            torch.cat([torch.zeros(1, dtype=torch.long, device=self.device), multiplicity[:-1]]), 0
+        )
+        draw = (torch.rand(n_sites, device=self.device) * multiplicity.clamp(min=1)).long()
+        rep_atom = order[start + draw.clamp(max=multiplicity.clamp(min=1) - 1)]
+
+        symmetric = (site_P - site_P.transpose(-1, -2)).abs().amax(dim=(-1, -2)) < 1e-6
+        eligible = symmetric & (multiplicity > 1)
+
+        edge_ref = torch.where(
+            eligible[:, None], input_full_coords[rep_atom], input_site_coords
+        )
+        mapped = site_P @ batch.ops_inv[rep_atom]
+        projectors = torch.where(eligible[:, None, None], mapped, site_P)
+        return edge_ref, projectors
 
     def forward(self, batch: Any) -> dict[str, torch.Tensor]:
         """Calculates asymmetric unit diffusion loss.
@@ -108,17 +153,29 @@ class WyckoffDiffusion(nn.Module):
         input_crys_fam = c0[:, None] * ori_crys_fam + c1[:, None] * rand_crys_fam
         input_crys_fam = self.crystal_family.proj_k_to_spacegroup(input_crys_fam, batch.spacegroup)
 
+        # Viewpoint augmentation: which orbit member is the anchor is pure bookkeeping,
+        # so an equivariant denoiser would be blind to it. Collapsing the orbit to one
+        # node makes the model viewpoint-dependent instead (docs/asymmetric-unit-deficit.md
+        # §7), so sample the choice during training. Only the edge reference position and
+        # the frame of the head's output move; noise and target stay in the canonical frame,
+        # which keeps the loss comparable to an unaugmented run.
+        edge_ref_coords, out_projectors = input_site_coords, site_P
+        if self.augment_viewpoint and self.training:
+            edge_ref_coords, out_projectors = self._sample_viewpoint(
+                batch, inverse_site_map, input_site_coords, input_full_coords, site_P
+            )
+
         pred_crys_fam, pred_site_x = self.decoder(
             time_emb,
             site_atom_types,
-            input_site_coords,
+            edge_ref_coords,
             input_full_coords,
             input_crys_fam,
             num_sites,
             batch.num_atoms,
             site2graph,
             inverse_site_map,
-            site_projectors=site_P,
+            site_projectors=out_projectors,
         )
         pred_crys_fam = self.crystal_family.proj_k_to_spacegroup(pred_crys_fam, batch.spacegroup)
 
