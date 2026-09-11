@@ -21,6 +21,7 @@ artifacts/
 new_crystals/
 
 # Cache directories and graph caches
+.worktrees/
 cache/
 *.pth
 
