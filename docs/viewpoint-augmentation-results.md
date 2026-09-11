@@ -70,10 +70,15 @@ augmentable.
 | gradients flow | 53 parameter tensors with nonzero grad |
 | test suite | 34 passed |
 
-## 3. Why the pilot could not resolve the effect
+## 3. The pilot gate was invalid — do not repeat it
 
-The gate was "viewpoint spread must fall clearly after ~25 epochs". It cannot, because
-**spread is dominated by training maturity, not by augmentation**:
+The gate was specified as "viewpoint spread must fall clearly after ~25 epochs, otherwise
+the implementation is broken". **That gate cannot distinguish a working implementation
+from a broken one, and a failure to meet it says nothing.** It was run, it was not met,
+and the correct conclusion was that the gate was wrong rather than the code.
+
+The reason is a confound: **spread is dominated by training maturity, not by
+augmentation**.
 
 | orbit size m | augmented, best @ ep 19 | unaugmented control, best @ ep 9 | converged baseline, ep 510 |
 |---:|---:|---:|---:|
@@ -94,7 +99,17 @@ difference on top of that — within what an epoch mismatch alone could explain,
 augmented pilot had ~10 more epochs than the control at the time of measurement.
 
 The honest reading: **this pilot design cannot answer the question.** A spread comparison
-is only meaningful between checkpoints trained to comparable maturity.
+is only meaningful between checkpoints trained to comparable maturity. An early checkpoint
+is further from viewpoint invariance than a late one *regardless* of augmentation, and the
+25-epoch window sits entirely inside that transient.
+
+The methodological lesson, since the next person will otherwise repeat it: a cheap early
+gate needs a quantity that is already near its asymptote at the gate's budget. Viewpoint
+spread is not — it moves by a factor of ~3 between epoch 25 and epoch 510 on the
+unaugmented model alone. Correctness of this change is better established by the direct
+algebraic checks in §2 and `bench/viewpoint_checks/`, which are exact, instant, and do not
+depend on training at all. Use those as the gate; use spread only as an end-of-training
+mechanism check against a baseline of matched maturity.
 
 ## 4. What the pilot does show
 
@@ -115,7 +130,44 @@ above its epoch-14 value, so run-to-run noise on this objective is an order of m
 larger than the gap being claimed. The defensible statement is that augmentation does not
 degrade the unaugmented validation loss at this budget — nothing stronger.
 
-## 5. What is still needed
+## 5. Environment hazard: one venv shared by every checkout
+
+Worth recording because it can silently invalidate a run rather than fail loudly.
+
+There is a single virtualenv, `/home/kna/DiffCSPNew/.venv`, and **every checkout points at
+it by symlink** — verified with `readlink -f`:
+
+| checkout | `.venv` |
+|---|---|
+| `/home/kna/DiffCSPNew` | the real venv |
+| `/home/kna/DiffCSPNew/.worktrees/painn` | symlink -> the real venv |
+| this worktree | symlinked to it initially; removed, see below |
+
+`diffcsp` is installed editable, and its path is recorded in one file,
+`.venv/lib/python3.12/site-packages/_editable_impl_diffcsp.pth`, which contains a single
+checkout path. **`uv run` rewrites that file to the current project root on every
+invocation.** So with several worktrees active it thrashes: it was observed pointing at
+this worktree, then at `.worktrees/painn`, then back at the main checkout, purely
+depending on who ran `uv` last.
+
+Consequences:
+
+- `uv run` from inside a checkout is safe — it rewrites the path to that checkout first.
+- Invoking `.venv/bin/python` **directly** is not: it imports whichever checkout won the
+  last write. A training run started that way can silently train the wrong code.
+- Symlinking the shared venv into a worktree is actively harmful, because the first
+  `uv run` there repoints the shared file and changes what *other* checkouts import.
+
+What this worktree does instead: no `.venv` at all, and a `run.py` launcher that inserts
+the worktree root at `sys.path[0]` before running the target, so imports are independent
+of the `.pth` no matter who last wrote it. Verified with `diffcsp.__file__` before
+training.
+
+The actual fix is a real `uv venv` per worktree, which **no checkout has done**. It was
+not applied here: repointing the shared `.pth` is a write to a resource two live agents
+depend on.
+
+## 6. What is still needed
 
 A matched full run. At 424 iterations/epoch and ~14 s/epoch uncontended (~25 s/epoch with
 the concurrent PaiNN job on GPU 0), 1000 epochs is **3.9 h alone, ~7 h contended**. Then:
