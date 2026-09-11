@@ -1,13 +1,21 @@
-# Viewpoint augmentation: implementation and pilot results
+# Viewpoint augmentation: it works on the mechanism and does not help
 
 Implements the "learned/statistical" option from `docs/asymmetric-unit-deficit.md` §6/§7 —
 randomise which orbit member is the anchor during training, so the model has to learn the
 invariance the full-cell graph gets for free.
 
-**Status: implemented and verified; full training not completed.** The pilot could not
-resolve the effect, for a reason worth recording (below), and a matched full run is ~7 h
-under current GPU contention. What is established is the implementation and its
-correctness gates, plus a matched-budget signal that is directionally right but weak.
+**Result: negative.** Trained to convergence (1000 epochs, best val at epoch 810) the
+augmentation does reduce viewpoint dependence — the quantity it targets — by 11-23%
+relative. It does not convert that into match rate. In the bin the change was aimed at,
+multiplicity > 1 and DoF >= 9, vanilla's lead **widens from +8.1 to +11.2 points**. Against
+the unaugmented asymmetric baseline the change is -3.0 points there (49 vs 67 discordant,
+p = 0.11), i.e. no significant difference, with a consistent slight drift the wrong way
+across clashes, cell volume and DoF <= 5.
+
+The conclusion is not that the diagnosis in §7 of the deficit note was wrong — viewpoint
+dependence is real and measurable, and this reduces it. It is that **reducing it by this
+much is not worth anything on this benchmark**, which makes the structural routes (§6 of
+that note) the ones left standing.
 
 ---
 
@@ -167,10 +175,98 @@ The actual fix is a real `uv venv` per worktree, which **no checkout has done**.
 not applied here: repointing the shared `.pth` is a write to a resource two live agents
 depend on.
 
-## 6. What is still needed
+## 6. Results
 
-A matched full run. At 424 iterations/epoch and ~14 s/epoch uncontended (~25 s/epoch with
-the concurrent PaiNN job on GPU 0), 1000 epochs is **3.9 h alone, ~7 h contended**. Then:
+Trained 1000 epochs, `--augment-viewpoint`, otherwise identical to the baseline config
+(512 hidden, 6 layers, batch 64, lr 1e-3). Best val loss **0.41299 at epoch 810**, against
+the unaugmented baseline's **0.40472 at epoch 510** — comparable, since validation runs
+under `eval()` where the augmentation is inert. Wall clock ~5 h sharing GPU 0. Benchmarked
+on the same 1000 representations x 3 draws.
+
+### The mechanism did move
+
+Two-viewpoint relative difference in the predicted score. Both models converged, so this
+is the fair comparison the pilot could not make:
+
+| orbit size m | baseline, ep 510 | augmented, ep 810 | change |
+|---:|---:|---:|---:|
+| 1 (null) | 0.001 | 0.003 | — |
+| 2 | 0.326 | **0.290** | -11% |
+| 3-4 | 0.490 | **0.419** | -14% |
+| 5-8 | 0.625 | **0.484** | -23% |
+
+The augmentation does what it was designed to do, and the effect grows with orbit size, as
+it should. But it only shaves the dependence — an equivariant denoiser scores 0, and the
+augmented model is still at 0.29-0.48.
+
+### The match rate did not follow
+
+Per-trial, paired on identical draws:
+
+| subset | n | vanilla | asymm-inno2 | asymm-aug |
+|---|---:|---:|---:|---:|
+| ALL | 1000 | 81.3% | 79.5% | 78.7% |
+| multiplicity == 1 | 110 | 47.9% | 47.3% | 48.8% |
+| multiplicity > 1 | 890 | 85.5% | 83.4% | 82.4% |
+| &nbsp;&nbsp;...DoF <= 5 | 551 | 97.1% | 97.9% | 97.2% |
+| &nbsp;&nbsp;...DoF 6-8 | 142 | 84.3% | 79.8% | 80.3% |
+| &nbsp;&nbsp;**...DoF >= 9** | 197 | **53.8%** | **45.7%** | **42.6%** |
+
+Paired McNemar in the headline bin (multiplicity > 1, DoF >= 9, 591 trials):
+
+| comparison | gap | discordant | p |
+|---|---:|---|---:|
+| vanilla vs asymm-inno2 (baseline) | +8.1 | 91 vs 43 | 4.1e-05 |
+| **vanilla vs asymm-aug** | **+11.2** | 103 vs 37 | 2.2e-08 |
+| asymm-aug vs asymm-inno2 | -3.0 | 49 vs 67 | 0.11 |
+
+The aug-vs-baseline difference is **not significant** (p = 0.11 in the headline bin, 0.15
+overall), so the honest statement is that augmentation left the match rate where it was,
+not that it damaged it. What is clear is that it did not help.
+
+### Secondary diagnostics, all drifting slightly the wrong way
+
+| metric (DoF >= 9, mult > 1 unless noted) | vanilla | asymm-inno2 | asymm-aug |
+|---|---:|---:|---:|
+| clashes below 0.9x true contact | 4.6% | 18.8% | 21.3% |
+| median rel. cell-volume error | 0.0642 | **0.0522** | 0.0652 |
+| per-trial match, DoF <= 5 (mult > 1) | 97.1% | 97.9% | 97.2% |
+
+The cell-volume regression is the most notable: the unaugmented asymmetric model's clear
+advantage over vanilla on lattices (0.0522 vs 0.0642) is **erased** (0.0652). None of these
+individually is significant, but all three point the same way, which is consistent with the
+augmentation spending capacity on an invariance that does not pay for itself.
+
+### Reading
+
+The §7 diagnosis stands — viewpoint dependence is real, and this reduces it. What fails is
+the inference that reducing it recovers the match rate. Either an 11-23% reduction is far
+too little (the residual 0.29-0.48 is still enormous next to an equivariant model's 0), or
+viewpoint dependence is a *symptom* of the collapse rather than the binding constraint.
+§3 of the deficit note supports the latter: the two architectures' anchor representations
+diverge by 37% in hidden state and 58% in coordinate score by layer 6, and that divergence
+comes from replicas carrying individuated states through depth — something augmentation
+cannot supply, because no amount of viewpoint sampling gives the collapsed graph more than
+one state per orbit.
+
+That leaves the structural options in §6 of the deficit note as the ones worth trying:
+conditioning the message on the replica's operation (`hj = MLP([h_{s(j)}, embed(R_j)])`),
+which restores individuated neighbour states at unchanged `K x N` cost, or equivariant
+Cartesian features, which make the collapse lossless by construction rather than on
+average.
+
+## 7. Reproducing
+
+Training: 424 iterations/epoch, ~14 s/epoch uncontended and ~25 s/epoch sharing GPU 0;
+the run above took ~5 h wall clock for 1000 epochs.
+
+```bash
+python run.py diffcsp/cli/train.py --model wyckoff --augment-viewpoint \
+  --epochs 1000 --batch_size 64 --lr 1e-3 --no-wandb --num_workers 8 \
+  --ckpt_path runs/aug/wyckoff_aug.pt --eval_freq 10 --save_freq 50
+```
+
+Then `scratch/bench_on_finish.sh <training-pid>` runs everything below, or by hand:
 
 ```bash
 python run.py bench/run_diffusion.py --regime wyckoff --ckpt <aug_best.pt> \
@@ -187,6 +283,10 @@ python run.py bench/structure_diagnostics.py --preds "asymm-aug=runs/aug/pred.pk
 ```
 
 Primary metric: the multiplicity > 1 & DoF >= 9 per-trial gap, baseline vanilla +8.1
-(91 vs 43 discordant, p = 4.1e-05). Secondary: does the viewpoint spread at ep ~510 fall
-below the baseline's 0.326 / 0.490 / 0.625 — that is the mechanism check, and it is only
-interpretable against a checkpoint of comparable maturity.
+(91 vs 43 discordant, p = 4.1e-05). Secondary: the viewpoint spread against the baseline's
+0.326 / 0.490 / 0.625 — the mechanism check, interpretable only against a checkpoint of
+comparable maturity, which is why it belongs here and not in a pilot (§3).
+
+Artifacts from the run reported above, in this worktree:
+`runs/aug/wyckoff_aug_best.pt` (epoch 810), `runs/aug/pred_aug.pkl`,
+`runs/aug/results_aug.pkl`, `logs/full_aug.log`, `logs/bench_on_finish.log`.
