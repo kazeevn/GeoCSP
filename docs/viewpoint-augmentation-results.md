@@ -1,21 +1,23 @@
-# Viewpoint augmentation: it works on the mechanism and does not help
+# Viewpoint augmentation: it works, and it helps
 
 Implements the "learned/statistical" option from `docs/asymmetric-unit-deficit.md` §6/§7 —
 randomise which orbit member is the anchor during training, so the model has to learn the
 invariance the full-cell graph gets for free.
 
-**Result: negative.** Trained to convergence (1000 epochs, best val at epoch 810) the
-augmentation does reduce viewpoint dependence — the quantity it targets — by 11-23%
-relative. It does not convert that into match rate. In the bin the change was aimed at,
-multiplicity > 1 and DoF >= 9, vanilla's lead **widens from +8.1 to +11.2 points**. Against
-the unaugmented asymmetric baseline the change is -3.0 points there (49 vs 67 discordant,
-p = 0.11), i.e. no significant difference, with a consistent slight drift the wrong way
-across clashes, cell volume and DoF <= 5.
+> **CORRECTION.** This note originally concluded the augmentation did not help. That was
+> wrong, and the error was methodological: the augmented run was compared against the
+> published inno2 baseline, which turns out to have been trained with a different and
+> better recipe than the one used here. Against a **matched-recipe control** — trained
+> later as part of the capacity experiment — the augmentation is **+5.8 points in the
+> headline bin (80 vs 46 discordant, p = 0.0031)** and **−0.6 at multiplicity 1
+> (p = 0.86)**, where it is inert by construction. See §7. The original baseline-relative
+> numbers are kept below, marked, because they show what the confound looked like.
 
-The conclusion is not that the diagnosis in §7 of the deficit note was wrong — viewpoint
-dependence is real and measurable, and this reduces it. It is that **reducing it by this
-much is not worth anything on this benchmark**, which makes the structural routes (§6 of
-that note) the ones left standing.
+**Result: positive but partial.** The augmentation reduces viewpoint dependence — the
+quantity it targets — by 11-23% relative, and converts that into +5.8 points in the bin
+the deficit lives in. It does not close the gap to vanilla: the augmented model reaches
+42.6% there against vanilla's 53.8%, recovering roughly a third of the (recipe-handicapped)
+gap.
 
 ---
 
@@ -101,10 +103,7 @@ difference. Do not read the 12% gap as an augmentation effect.
 (two-viewpoint relative difference; `m == 1` is 0.000 in every run, confirming the probe)
 
 Both 25-epoch pilots sit at 0.9-1.3 while the converged unaugmented baseline is at
-0.33-0.63. So an early checkpoint is *further* from viewpoint invariance than a trained
-one regardless of augmentation, and the augmentation's contribution is a ~12% relative
-difference on top of that — within what an epoch mismatch alone could explain, since the
-augmented pilot had ~10 more epochs than the control at the time of measurement.
+0.33-0.63.
 
 The honest reading: **this pilot design cannot answer the question.** A spread comparison
 is only meaningful between checkpoints trained to comparable maturity. An early checkpoint
@@ -199,7 +198,7 @@ The augmentation does what it was designed to do, and the effect grows with orbi
 it should. But it only shaves the dependence — an equivariant denoiser scores 0, and the
 augmented model is still at 0.29-0.48.
 
-### The match rate did not follow
+### The match rate, relative to the published baseline (confounded -- see §8)
 
 Per-trial, paired on identical draws:
 
@@ -224,7 +223,7 @@ The aug-vs-baseline difference is **not significant** (p = 0.11 in the headline 
 overall), so the honest statement is that augmentation left the match rate where it was,
 not that it damaged it. What is clear is that it did not help.
 
-### Secondary diagnostics, all drifting slightly the wrong way
+### Secondary diagnostics, relative to the published baseline (same confound)
 
 | metric (DoF >= 9, mult > 1 unless noted) | vanilla | asymm-inno2 | asymm-aug |
 |---|---:|---:|---:|
@@ -237,25 +236,49 @@ advantage over vanilla on lattices (0.0522 vs 0.0642) is **erased** (0.0652). No
 individually is significant, but all three point the same way, which is consistent with the
 augmentation spending capacity on an invariance that does not pay for itself.
 
+## 7. The corrected comparison
+
+The numbers above are all relative to the published inno2 baseline, whose recipe is not
+reproducible from the repo: a same-recipe unaugmented model trained afterwards
+(`asymm-h512`, see `docs/capacity-experiment-results.md` §2) reaches only **36.9%** in the
+headline bin against the baseline's 45.7%, and has worse val loss despite twice the epochs.
+So the baseline was a 7-9 point handicap, and everything measured against it was shifted.
+
+Against the matched control, paired on identical draws:
+
+| subset | augmented | control | gap | discordant | p |
+|---|---:|---:|---:|---|---:|
+| ALL | 78.7% | 77.5% | +1.2 | 146 vs 110 | 0.029 |
+| **multiplicity == 1** | 48.8% | 49.4% | **−0.6** | 14 vs 16 | **0.86** |
+| multiplicity > 1 | 82.4% | 81.0% | +1.4 | 132 vs 94 | 0.014 |
+| &nbsp;&nbsp;...DoF <= 5 | 97.2% | 96.6% | +0.5 | 25 vs 16 | 0.21 |
+| &nbsp;&nbsp;**...DoF >= 9** | **42.6%** | **36.9%** | **+5.8** | 80 vs 46 | **0.0031** |
+
+The multiplicity-1 row is the internal control and it behaves exactly as it must: where
+every orbit has one member there is no representative to randomise, the augmentation is
+inert, and the effect vanishes (p = 0.86). The benefit appears only where the augmentation
+is active and is largest in the high-DoF bin the deficit lives in. That pattern is hard to
+produce by run-to-run noise.
+
+Caveats: one run per arm, no seed replication, so treat +5.8 as the right sign and
+approximate size rather than a precise estimate.
+
 ### Reading
 
-The §7 diagnosis stands — viewpoint dependence is real, and this reduces it. What fails is
-the inference that reducing it recovers the match rate. Either an 11-23% reduction is far
-too little (the residual 0.29-0.48 is still enormous next to an equivariant model's 0), or
-viewpoint dependence is a *symptom* of the collapse rather than the binding constraint.
-§3 of the deficit note supports the latter: the two architectures' anchor representations
-diverge by 37% in hidden state and 58% in coordinate score by layer 6, and that divergence
-comes from replicas carrying individuated states through depth — something augmentation
-cannot supply, because no amount of viewpoint sampling gives the collapsed graph more than
-one state per orbit.
-
-That leaves the structural options in §6 of the deficit note as the ones worth trying:
+The §7 diagnosis holds up: viewpoint dependence is real, reducing it is achievable by
+augmentation, and doing so pays. But it pays partially — the residual spread is still
+0.29-0.48 against an equivariant model's 0, and the gap to vanilla remains +11.2. So the
+structural options in §6 of the deficit note are complements rather than alternatives:
 conditioning the message on the replica's operation (`hj = MLP([h_{s(j)}, embed(R_j)])`),
 which restores individuated neighbour states at unchanged `K x N` cost, or equivariant
 Cartesian features, which make the collapse lossless by construction rather than on
 average.
 
-## 7. Reproducing
+The methodological lesson is the expensive one: **compare against a control you trained,
+not against a published baseline whose recipe you cannot reproduce.** That error flipped
+the sign of this experiment's headline conclusion.
+
+## 8. Reproducing
 
 Training: 424 iterations/epoch, ~14 s/epoch uncontended and ~25 s/epoch sharing GPU 0;
 the run above took ~5 h wall clock for 1000 epochs.
