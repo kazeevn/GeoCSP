@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
@@ -288,6 +289,10 @@ def train(
             "train_loss": train_loss_val,
             "val_loss": val_loss_val,
             "wandb_run_id": getattr(wandb_run, "id", None) if wandb_run is not None else None,
+            # Wall clock is part of the experiment record: throughput here is
+            # overhead-bound, so a run's cost is not recoverable from its config.
+            "train_time_s": time.perf_counter() - train_start_time,
+            "s_per_epoch": (time.perf_counter() - train_start_time) / max(1, epoch_idx + 1 - start_epoch),
         }
         p = Path(ckpt_path)
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -426,8 +431,10 @@ def train(
 
     matcher = StructureMatcher(stol=0.5, angle_tol=10, ltol=0.3)
 
+    train_start_time = time.perf_counter()
     epoch_iter = trange(start_epoch, epochs, desc="Epochs") if is_main else range(start_epoch, epochs)
     for epoch in epoch_iter:
+        epoch_start_time = time.perf_counter()
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
         ddp_model.train()
@@ -456,7 +463,14 @@ def train(
             avg_loss = local_avg_loss
 
         scheduler.step(avg_loss)
-        log_data = {"epoch": epoch, "train_loss": avg_loss, "lr": optimizer.param_groups[0]["lr"]}
+        now = time.perf_counter()
+        log_data = {
+            "epoch": epoch,
+            "train_loss": avg_loss,
+            "lr": optimizer.param_groups[0]["lr"],
+            "epoch_time_s": now - epoch_start_time,
+            "train_time_s": now - train_start_time,
+        }
         if is_main:
             print(f"Epoch {epoch:03d} | Train Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
 
