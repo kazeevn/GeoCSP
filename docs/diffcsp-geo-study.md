@@ -1,14 +1,20 @@
-# DiffCSP-Geo: Cartesian-Aware, Symmetry-Projected Crystal Structure Prediction
+# DiffCSP-Geo & GeoV2: Cartesian-Aware, Symmetry-Projected Crystal Structure Prediction
 
 **Project:** DiffCSP++ Research & Engineering  
+**Dates:** 2026-09-13 to 2026-09-29  
+**Code:** commits `d7b1a7b` / `4d39843` (`DiffCSP-Geo`), `561bb8f` (`DiffCSP-GeoV2`, `DiffCSP-GeoOrb`, test-time ORB ranking), `9a4aa98` / `f9e3b3a` (Alex-MP-20 `GeoV2`).  
 **Evaluation Standard:** Materials Project 20 (MP-20) Test Subset (1,000 crystal representations $\times$ 3 trials = 2,998 draws) evaluated via `pymatgen.analysis.structure_matcher.StructureMatcher(stol=0.5, angle_tol=10.0, ltol=0.3)`.  
-**WanDB Run:** [`expert-wood-72` (ID: `7jdhrv2f`)](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f) in project `symmetry-advantage/diffcsp`.
+**WanDB Runs (project `symmetry-advantage/diffcsp`):**
+- `DiffCSP-Geo` (MP-20, 500e): [`expert-wood-72` (`7jdhrv2f`)](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f)
+- `DiffCSP-GeoV2` (MP-20, 400e): [`toasty-wood-73` (`say1phjr`)](https://wandb.ai/symmetry-advantage/diffcsp/runs/say1phjr)
+- `DiffCSP-GeoOrb` (MP-20, 200e): [`summer-dragon-74` (`onl3oy96`)](https://wandb.ai/symmetry-advantage/diffcsp/runs/onl3oy96)
+- `DiffCSP-GeoV2` (Alex-MP-20, 150e): [`different-morning-75` (`ua1g6od4`)](https://wandb.ai/symmetry-advantage/diffcsp/runs/ua1g6od4)
 
 ---
 
 ## 1. Executive Summary
 
-In previous investigations (`docs/asymmetric-unit-deficit.md`, `docs/equivariant-painn-study.md`), attempts to improve **DiffCSP++** focused on collapsing the $N$-atom conventional cell to the $K$-site asymmetric unit ($K \ll N$). While this reduced graph edges, it caused a severe match-rate deficit on high-DoF structures ($\text{DoF} \ge 6$) because collapsing orbit replicas discarded the distinct hidden states that the non-equivariant denoiser relies on, while finite-cutoff models (like PaiNN with 6 Å cutoff) starved on expanded initial cells.
+In previous investigations ([`docs/asymmetric-unit-deficit.md`](asymmetric-unit-deficit.md), [`docs/archive/equivariant-painn-study.md`](archive/equivariant-painn-study.md)), attempts to improve **DiffCSP++** focused on collapsing the $N$-atom conventional cell to the $K$-site asymmetric unit ($K \ll N$). While this reduced graph edges, it caused a severe match-rate deficit on high-DoF structures ($\text{DoF} \ge 6$) because collapsing orbit replicas discarded the distinct hidden states that the non-equivariant denoiser relies on, while finite-cutoff models (like PaiNN with 6 Å cutoff) starved on expanded initial cells.
 
 **DiffCSP-Geo** resolves this challenge by retaining the full-cell graph ($N$ atoms) while addressing the four fundamental architectural flaws of vanilla DiffCSP++:
 1. **Cartesian Metric Awareness (Curing Chemical Blindness)**: Extends fractional difference sinusoids $(x_j - x_i) \pmod 1$ with true Euclidean bond lengths $r_{ij} = \|\mathbf{L} \Delta \mathbf{x}_{ij, \text{mic}}\|_2$, 32-frequency Bessel radial basis functions ($r_{\text{cut}} = 8.0$ Å), and 3D unit direction vectors $\hat{\mathbf{r}}_{ij}$.
@@ -113,34 +119,59 @@ Why did DiffCSP-Geo saturate and overfit on MP-20 when trained past 320 epochs, 
 3. **12.28M Parameters is Oversized for MP-20 (~27k Crystals):**
    The MP-20 training set contains ~27,000 structures. A 12.28M parameter model possesses $\approx 455$ parameters per crystal structure. With strong inductive bias, DiffCSP-Geo fully captured the underlying distribution in **~300 epochs (~65,000 gradient steps)**. Continuing training beyond this point allowed the unconstrained 12.28M parameters to fit idiosyncratic sample noise.
 
-### 3.3 Flaws in the Default Training Schedule
+### 3.3 Flaws in the Original `geo` Training Schedule
 
-Two implementation choices in [`diffcsp/cli/train.py`](file:///home/kna/DiffCSPNew/diffcsp/cli/train.py) exacerbated this overfitting:
+Two implementation choices in [`diffcsp/cli/train.py`](file:///home/kna/DiffCSPNew/diffcsp/cli/train.py) exacerbated this overfitting for `--model geo`:
 1. **Scheduler Stepped on Training Loss (`scheduler.step(avg_loss)`):**
-   In line 489 of `diffcsp/cli/train.py`, `scheduler.step(avg_loss)` passed the training loss to `ReduceLROnPlateau`. When training loss descent slowed around epoch 300, the scheduler reduced the learning rate ($5\times 10^{-4} \to 3\times 10^{-4} \to 1.8\times 10^{-4} \to 1\times 10^{-4}$). Decaying the learning rate when validation loss is already rising traps the model in narrow local minima on the training set, accelerating memorization.
+   `scheduler.step(avg_loss)` passed the training loss to `ReduceLROnPlateau`. When training loss descent slowed around epoch 300, the scheduler reduced the learning rate ($5\times 10^{-4} \to 3\times 10^{-4} \to 1.8\times 10^{-4} \to 1\times 10^{-4}$). Decaying the learning rate when validation loss is already rising traps the model in narrow local minima on the training set, accelerating memorization.
 2. **Zero Weight Decay and Absence of EMA:**
-   - Optimization used bare `torch.optim.Adam` without weight decay ($L_2 = 0$). Deep linear layers had no norm constraint.
-   - Standard diffusion pipelines use Exponential Moving Average (EMA) with decay $\beta = 0.999$ or $0.9999$ to filter high-frequency noise from score-matching gradients. Without EMA, the model weights tracked the high-variance stochastic noise of late-stage batches.
+   - Optimization for `--model geo` used bare `torch.optim.Adam` without weight decay ($L_2 = 0$).
+   - Without Exponential Moving Average (EMA) smoothing, late-stage weights tracked high-variance stochastic batch noise.
 
-### 3.4 Recommendations for Future Architectures & Training
-
-1. **Optimal Training Budget for DiffCSP-Geo on MP-20:**
-   Cap training at **300 epochs (~65,000 gradient steps)**.
-2. **Scheduler & Optimizer Updates:**
-   - Step `ReduceLROnPlateau` on `avg_val_loss` (or switch to Cosine Annealing with Warmup to epoch 300).
-   - Switch to `torch.optim.AdamW` with weight decay $10^{-4}$.
-   - Add an EMA shadow model with decay $0.9999$ for evaluation and inference.
-3. **Model Downscaling:**
-   For datasets of MP-20 scale (~27k structures), a compact DiffCSP-Geo with **4M–6M parameters** (`hidden_dim=384, num_layers=4`) will likely match or outperform the 12.28M model while reducing training time by ~50% and preventing capacity overfitting. The 12.28M parameter scale is better reserved for large datasets such as LeMat-Bulk (>1.5M structures).
+*(Note: Stepping `ReduceLROnPlateau` on validation loss for legacy models and downscaling `GeoCSPNet` to 4M–6M parameters (`384x4`) on MP-20 remain untried ideas — see [`docs/ideas/training-and-capacity-refinements.md`](ideas/training-and-capacity-refinements.md).)*
 
 ---
 
-## 4. Artifacts & Code Reference
-- Model implementation: [`diffcsp/models/geo_cspnet.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_cspnet.py)
-- Diffusion wrapper: [`diffcsp/models/geo_diffusion.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_diffusion.py)
-- Training script: [`scripts/train_geo_500e.sh`](file:///home/kna/DiffCSPNew/scripts/train_geo_500e.sh)
-- Unit tests: [`tests/test_geo.py`](file:///home/kna/DiffCSPNew/tests/test_geo.py)
-- Best Weights (Epoch 320): `runs/mp20_geo/geo_mp20_500e_best.pt`
-- Final Weights (Epoch 500): `runs/mp20_geo/geo_mp20_500e.pt`
-- Benchmark results: `runs/bench/mp20/results_geo_500e.pkl`
-- W&B Run: [`expert-wood-72` (ID: `7jdhrv2f`)](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f)
+## 4. Follow-Up Variants: DiffCSP-GeoV2, DiffCSP-GeoOrb, and Test-Time ORB Ranking
+
+**Date:** 2026-09-13 to 2026-09-14 (committed in `561bb8f` on 2026-09-16; Alex-MP-20 run in `9a4aa98` / `f9e3b3a` on 2026-09-29).
+
+### 4.1 DiffCSP-GeoV2 (`--model geov2`, W&B `say1phjr`)
+[`GeoV2CSPNet`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_v2_cspnet.py) and [`GeoV2Diffusion`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_v2_diffusion.py) extend `DiffCSP-Geo` within the same $\le 12.28\text{M}$ parameter budget (`edge_dim=482`) by incorporating:
+- **Training stabilization:** `AdamW` ($\text{weight\_decay}=10^{-4}$), linear warmup + cosine annealing LR schedule, and `EMAModel` ($\text{decay}=0.9999$).
+- **Distance-gated attention aggregation:** Softmax edge attention multiplied by a learned sigmoid distance gate so close coordinating neighbors are not diluted by distant cell atoms in crowded cells.
+- **Directional bond force readout:** Edge scalar predictions projected along unit bond vectors $\hat{\mathbf{r}}_{ij} \mathbf{L}^{-1}$, summed with a 2-layer node coordinate MLP and projected by $\mathbf{P}_j$.
+- **Annealed Langevin corrector:** Smoothly decays corrector step size as $t \to 0$.
+
+Trained for 400 epochs on MP-20 (W&B [`toasty-wood-73` / `say1phjr`](https://wandb.ai/symmetry-advantage/diffcsp/runs/say1phjr)), `DiffCSP-GeoV2` reached a lower validation loss than `DiffCSP-Geo` (**0.3936** at epoch 300 vs **0.4057** at epoch 320), halved the atomic clash rate (**0.7%** vs **1.5%** overall, **0.0%** for $\text{DoF} \le 8$), and reduced median cell-volume error to **3.26%** (vs **3.90%** for `DiffCSP-Geo` and **6.84%** for vanilla). Single-sample MP-20 match rate is **82.59% per-trial / 87.60% best-of-3** (paired McNemar vs `DiffCSP-Geo`: $p = 0.078$, statistically indistinguishable overall).
+
+### 4.2 DiffCSP-GeoOrb & Two-Phase Hybrid Sampling (`--model geo_orb`, W&B `onl3oy96`)
+[`GeoOrbCSPNet`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_orb_cspnet.py) and [`GeoOrbDiffusion`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_orb_diffusion.py) condition a 6-layer `GeoV2CSPLayer` denoiser ($\le 12.28\text{M}$ trainable parameters) on frozen `orb-v3` atomic representations (256-d), Cartesian/fractional forces (6-d), and virial stresses (9-d), and implement **Innovation 6 (Two-Phase Hybrid Sampling)** via `--orb_handoff_t 0.10` (handing off the diffusion trajectory at $t \le 0.10$ to 50 steps of symmetry-constrained `FixSymmetry` + `FrechetCellFilter` ORB FIRE relaxation).
+
+Trained for 200 epochs on MP-20 (W&B [`summer-dragon-74` / `onl3oy96`](https://wandb.ai/symmetry-advantage/diffcsp/runs/onl3oy96), best val loss **0.3894** at epoch 180), hybrid sampling achieved the lowest median cell-volume error (**1.06%** overall, **0.57%** on $\text{DoF} \le 5$) and **0.0367 Å** matched RMS, but lower per-trial match rate (**78.92% per-trial / 86.70% best-of-3**, trailing `DiffCSP-Geo` by 4.5 points per-trial, $p = 9.7 \times 10^{-14}$), as early handoff at $t = 0.10$ traps high-DoF structures in local MLIP basins before diffusion finishes resolving multi-orbit packing.
+
+### 4.3 Test-Time ORB Candidate Ranking (`--rank_candidates 3`)
+Instead of modifying the denoiser or handing off early to local relaxation, `bench/run_diffusion.py` supports drawing $M=3$ parallel trajectories per trial (with `--noise_cutoff_t 50 --step_lr 8e-6`) and selecting the candidate with the lowest single-point `orb-v3` energy per atom (`scripts/eval_geo_rank3.sh`, `scripts/eval_geov2_rank3.sh`, evaluated 2026-09-14):
+
+| Regime | Per-Trial Match | Best-of-3 Match | DoF $\ge 9$ Best-of-3 | Mean RMS (Å) | Clash Rate | Median Vol Error |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| `vanilla-diffcsp` | 81.32% | 86.60% | 57.20% | 0.0387 | 3.7% | 6.84% |
+| `diffcsp-geo` (500e, best ep 320) | 83.46% | 88.40% | 61.74% | 0.0373 | 1.5% | 3.90% |
+| `diffcsp-geov2` (400e, best ep 300) | 82.59% | 87.60% | 59.47% | 0.0407 | 0.7% | 3.26% |
+| `diffcsp-geo-orb` (200e, handoff $t=0.10$) | 78.92% | 86.70% | 57.20% | 0.0367 | 1.6% | **1.06%** |
+| **`diffcsp-geo-rank3` ($M=3$ ORB rank)** | **85.89%** | **89.60%** | **67.80%** | 0.0329 | **0.5%** | 2.42% |
+| **`diffcsp-geov2-rank3` ($M=3$ ORB rank)** | **85.66%** | **89.10%** | **64.77%** | **0.0316** | **0.5%** | 1.47% |
+
+### 4.4 Scaling `DiffCSP-GeoV2` to Alex-MP-20 (W&B `ua1g6od4`)
+On 2026-09-29 (`9a4aa98` / `f9e3b3a`, `scripts/train_geov2_alex_mp20.sh`), `DiffCSP-GeoV2` (`512x6`, batch size 128, $\text{lr}=5\times 10^{-4}$, 150 epochs $\approx 712\text{k}$ steps) was trained on **Alex-MP-20** (607,683 train / 67,521 val structures with $\le 20$ atoms and $E_{\text{hull}} < 0.1\text{ eV}$). With $22\times$ more training structures than MP-20, the 12.28M model showed **zero overfitting** across all 150 epochs (W&B [`different-morning-75` / `ua1g6od4`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ua1g6od4)): validation loss decreased monotonically to **0.3035** at epoch 140 (train loss **0.2975**) and finished at **0.3058** at epoch 150. See [`docs/lemat-geov2-variants.md`](lemat-geov2-variants.md) for the subsequent 4-GPU LeMat-Bulk `GeoV2` runs.
+
+---
+
+## 5. Artifacts & Code Reference
+- Model implementations: [`diffcsp/models/geo_cspnet.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_cspnet.py), [`diffcsp/models/geo_v2_cspnet.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_v2_cspnet.py), [`diffcsp/models/geo_orb_cspnet.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_orb_cspnet.py)
+- Diffusion wrappers: [`diffcsp/models/geo_diffusion.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_diffusion.py), [`diffcsp/models/geo_v2_diffusion.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_v2_diffusion.py), [`diffcsp/models/geo_orb_diffusion.py`](file:///home/kna/DiffCSPNew/diffcsp/models/geo_orb_diffusion.py)
+- Training & eval scripts: [`scripts/train_geo_500e.sh`](file:///home/kna/DiffCSPNew/scripts/train_geo_500e.sh), [`scripts/train_geov2_mp20.sh`](file:///home/kna/DiffCSPNew/scripts/train_geov2_mp20.sh), [`scripts/train_geo_orb.sh`](file:///home/kna/DiffCSPNew/scripts/train_geo_orb.sh), [`scripts/eval_geo_rank3.sh`](file:///home/kna/DiffCSPNew/scripts/eval_geo_rank3.sh), [`scripts/eval_geov2_rank3.sh`](file:///home/kna/DiffCSPNew/scripts/eval_geov2_rank3.sh), [`scripts/train_geov2_alex_mp20.sh`](file:///home/kna/DiffCSPNew/scripts/train_geov2_alex_mp20.sh)
+- Unit tests: [`tests/test_geo.py`](file:///home/kna/DiffCSPNew/tests/test_geo.py), [`tests/test_geo_v2.py`](file:///home/kna/DiffCSPNew/tests/test_geo_v2.py), [`tests/test_geo_orb.py`](file:///home/kna/DiffCSPNew/tests/test_geo_orb.py)
+- Checkpoints: `runs/mp20_geo/geo_mp20_500e_best.pt` (ep 320), `runs/mp20_geov2/geov2_mp20_400e_best.pt` (ep 300), `runs/mp20_geo_orb/geo_orb_mp20_200e_best.pt` (ep 180), `runs/alex_mp20_geov2/geov2_alex_mp20_150e.pt` (ep 140)
+- Benchmark results: `runs/bench/mp20/results_geo_500e.pkl`, `runs/bench/mp20/results_geov2.pkl`, `runs/bench/mp20/results_master.pkl`, `runs/bench/mp20/results_geov2_rank3.pkl`
+

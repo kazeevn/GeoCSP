@@ -5,9 +5,7 @@
 DiffCSP++ generates periodic crystal structures by diffusing atomic fractional coordinates on the 3-torus and lattice vectors on the Lie algebra $\mathfrak{gl}(3, \mathbb{R})$, enforcing exact space group symmetries by design. It supports both the original deep GNN denoiser (CSPNet) and a frozen pretrained Machine Learning Interatomic Potential backbone (ORB MLIP) with a lightweight adapter network.
 
 **Results and notes:** [`docs/benchmark.md`](docs/benchmark.md) for structure-prediction
-benchmarks, [`docs/training-stability.md`](docs/training-stability.md) for known
-training-stability issues and proposed fixes, [`docs/architectural-innovations.md`](docs/architectural-innovations.md) for
-recent architectural innovations for Wyckoff-conditioned CSP.
+benchmarks, [`docs/diffcsp-geo-study.md`](docs/diffcsp-geo-study.md) for `DiffCSP-Geo` and `DiffCSP-GeoV2` on MP-20 and Alex-MP-20, [`docs/lemat-geov2-variants.md`](docs/lemat-geov2-variants.md) for property-conditioned `GeoV2` on LeMat-Bulk, [`docs/asymmetric-unit-deficit.md`](docs/asymmetric-unit-deficit.md) for the asymmetric-unit orbit-collapse analysis, [`docs/training-stability.md`](docs/training-stability.md) for training-stability diagnostics, [`docs/ideas/`](docs/ideas/) for untried research proposals, and [`docs/archive/`](docs/archive/) for superseded studies.
 
 ---
 

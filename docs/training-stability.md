@@ -1,17 +1,16 @@
-# Training stability: three proposed fixes
+# Training stability: diagnostics and applied mitigations
 
-Status: **proposed, not applied.** All three touch `diffcsp/cli/train.py`, which is
-shared by the CSPNet and ORB paths, so applying them changes how every future run
-optimizes. They are written up here rather than committed so the change can be made
-deliberately, and so the checkpoints trained under the current settings stay
-interpretable.
+**Dates:** 2026-09-10 to 2026-09-30  
+**Code:** commits `e6fcb3d` (initial LeMat CSPNet diagnosis), `4d39843` (MP-20 `DiffCSP-Geo` plateau trapping), `561bb8f` (`GeoV2`/`GeoOrb` `AdamW` + warmup/cosine + EMA), `6dba3dc` (`EdgeBudgetBatchSampler` + per-step warmup/cosine + DDP non-finite grad skip), `bd81c4c` (`a_ehull01_lr5e4` restart).  
+**W&B Runs (project `symmetry-advantage/diffcsp`):** [`mqk461a6`](https://wandb.ai/symmetry-advantage/diffcsp/runs/mqk461a6), [`7jdhrv2f`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f), [`say1phjr`](https://wandb.ai/symmetry-advantage/diffcsp/runs/say1phjr), [`t6l9qjp7`](https://wandb.ai/symmetry-advantage/diffcsp/runs/t6l9qjp7), [`rnj30hh2`](https://wandb.ai/symmetry-advantage/diffcsp/runs/rnj30hh2).
 
-## What prompted this
+---
+
+## 1. Pathological Batch Spikes on LeMat-Bulk (`mqk461a6`, 2026-09-10)
 
 Vanilla CSPNet (512/6, 12,277,248 params) on LeMat-Bulk fmax1, filtered to
-`E_hull <= 0.1 eV` and `<= 128` atoms — 1,577,517 structures, batch 256, lr 1e-3,
-20 epochs, 6,162 steps per epoch.
-Run: `wandb.ai/symmetry-advantage/diffcsp/runs/mqk461a6`.
+`E_hull <= 0.1 eV` and `<= 128` atoms — 1,577,517 structures, fixed batch size 256, lr $10^{-3}$,
+20 epochs, 6,162 steps per epoch (commit `3d198d8` / `96f73e4`, W&B [`feasible-firefly-70` / `mqk461a6`](https://wandb.ai/symmetry-advantage/diffcsp/runs/mqk461a6)):
 
 | epoch | train | val | | epoch | train | val |
 |---|---|---|---|---|---|---|
@@ -28,113 +27,47 @@ Run: `wandb.ai/symmetry-advantage/diffcsp/runs/mqk461a6`.
 
 Train loss reached 0.3204 by epoch 4, then spiked to 1.5624 and kept oscillating to
 the end; the final epoch (0.3347) is worse than epoch 4. No NaNs, no OOM, and the
-learning rate never left 1.00e-03.
+learning rate never left $1.00 \times 10^{-3}$.
 
 Validation nonetheless improved steadily through the second half and was **still
-falling at the last measurement** (0.2902, epoch 20). So the instability cost
-training efficiency rather than preventing learning, and the epoch budget — not
-convergence — ended the run.
-
-That divergence between a chaotic train curve and a smooth val curve is the useful
-clue: the spikes are a handful of pathological *batches* per epoch, not a
-systematically wrong learning rate. Each fix below follows from that.
-
-None of this appeared on MP-20, where 1000 short epochs of 212 steps gave the
-scheduler room to act and the smaller cells produced smaller gradients.
+falling at the last measurement** (0.2902, epoch 20). The divergence between a chaotic train curve and a smooth val curve traced to three factors:
+1. **Heavy-tailed edge counts per fixed-size batch:** Cost per batch in the full-cell graph scales with $\sum_i N_i^2$. On LeMat-Bulk (`<= 128` atoms), cells above 32 atoms are 14.8% of structures but **73.7% of all edges**. A fixed-size batch of 256 structures drawn from the upper tail produces a much larger gradient than a typical batch.
+2. **Elementwise gradient value clipping (`clip_grad_value_(0.4)`):** Bounds each parameter coordinate independently rather than bounding the total step norm.
+3. **Unreachable `ReduceLROnPlateau(patience=15)` schedule:** Inherited from 1,000-epoch MP-20 runs (212 steps/epoch), `patience=15` could never fire inside a 20-epoch LeMat run (6,162 steps/epoch), and stepping it on `avg_loss` fed the noisy train spikes into the plateau detector.
 
 ---
 
-## Fix 1 — clip gradients by norm, not by value
+## 2. Scheduler Trapping & Capacity Overfitting on MP-20 (`7jdhrv2f`, 2026-09-13)
 
-`diffcsp/cli/train.py:432`
+The complementary risk to LeMat's failure to decay the LR was observed on MP-20 during the 500-epoch `DiffCSP-Geo` training run (commit `d7b1a7b`, W&B [`expert-wood-72` / `7jdhrv2f`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f); see [`docs/diffcsp-geo-study.md`](diffcsp-geo-study.md)):
 
-```python
-torch.nn.utils.clip_grad_value_(params_to_train, 0.4)          # current
-torch.nn.utils.clip_grad_norm_(params_to_train, max_norm=0.5)  # proposed
-```
-
-`clip_grad_value_` bounds each element independently. For a 12.3M-parameter model
-every element can sit at the 0.4 limit and the total gradient norm still be
-enormous, so one bad batch moves the weights arbitrarily far. Norm clipping bounds
-the step itself, which is what the spikes call for.
-
-This is the highest-value of the three: it targets the actual failure mode, and it
-is the one change that would have prevented the epoch-7 blowup.
-
-Worth knowing which batches are pathological. Cost per batch scales with the number
-of edges, `sum(n_i^2)` over the cell sizes in the batch, and that distribution is
-heavy-tailed on this dataset: cells above 32 atoms are 14.8% of structures but
-73.7% of all edges. A batch drawn from the upper tail produces a far larger
-gradient than a typical one.
-
-## Fix 2 — step the scheduler on validation loss
-
-`diffcsp/cli/train.py:444`
-
-```python
-scheduler.step(avg_loss)                                  # current: train loss
-scheduler.step(current_val_loss if current_val_loss is not None else avg_loss)
-```
-
-`avg_loss` is the train loss — precisely the spiking signal. Feeding it to
-`ReduceLROnPlateau` means a single noisy epoch can reset patience and mask a real
-plateau. Validation is measured on a fixed set every `eval_freq` epochs and is far
-smoother here; fall back to train loss only on epochs where no evaluation ran.
-
-Note `current_val_loss` already exists at that point in the loop, computed for the
-checkpoint-saving logic.
-
-## Fix 3 — make the schedule reachable within the epoch budget
-
-`diffcsp/cli/train.py:222`
-
-```python
-ReduceLROnPlateau(optimizer, factor=0.6, patience=15, min_lr=1e-4)   # current
-```
-
-With `patience=15` on a 20-epoch run the scheduler cannot fire even once, and it
-did not: the LR was 1.00e-03 for all 20 epochs. The setting is inherited from MP-20,
-where epochs are 212 steps; here an epoch is 6,162 steps, so patience measured in
-epochs means something ~30x larger.
-
-Either scale patience to the epoch budget (`patience=3` at 20-30 epochs), or drop
-the initial LR to 3e-4, or add a few hundred warmup steps and keep 1e-3. Warmup is
-the most targeted if Fix 1 is also applied, since the early epochs were stable and
-the blowup began at epoch 5.
-
----
-
-## Verifying a rerun
-
-Compare against the run above:
-
-- **train loss monotone after epoch ~3**, with no epoch exceeding roughly 1.3x its
-  predecessor. That is the direct test of Fix 1.
-- **LR below 1e-3 by the end**, showing the scheduler actually engaged (Fixes 2, 3).
-- **val below 0.2902**, the current best, at equal or fewer epochs.
-
-Since validation was still descending at epoch 20, raise the budget to ~30 epochs
-in the same rerun; at ~52 min/epoch that is roughly 26 hours. The preprocessed cache
-is warm, so a rerun reaches the training loop in about two minutes.
-
-## What is not proposed
-
-The instability is **not** an argument for a smaller batch or a smaller model. Batch
-256 was chosen from measured peak memory (19.11 GiB of 44.4) and ran 20 epochs
-without a single OOM. Shrinking it would reduce the per-batch edge count and so damp
-the spikes, but it treats the symptom and costs throughput; norm clipping addresses
-the cause directly.
-
----
-
-## Observations from MP-20 DiffCSP-Geo: Scheduler Trapping & Overfitting
-
-The complementary risk to LeMat's failure to decay the LR was observed on MP-20 during the 500-epoch DiffCSP-Geo training run ([`expert-wood-72`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f)):
-
-1. **Premature and Counter-Productive LR Decay from Stepping on Train Loss (Fix 2):**
-   Because `scheduler.step(avg_loss)` in `diffcsp/cli/train.py` tracked training loss rather than validation loss, the scheduler interpreted the natural flattening of train loss around Epoch 300 as a plateau, sequentially dropping the LR: $5\times 10^{-4} \to 3\times 10^{-4} \to 1.8\times 10^{-4} \to 1.0\times 10^{-4}$.
-   However, validation loss reached its global minimum at **Epoch 320 (0.4057)** and began steadily rising thereafter (reaching **0.4373** at Epoch 500). Lowering the learning rate while validation loss was climbing trapped the model in narrow minima, accelerating training set memorization ($0.3619 \to 0.3189$) and widening the generalization gap from $+0.0438$ to $+0.1184$.
-
+1. **Premature LR Decay from Stepping `ReduceLROnPlateau` on Train Loss:**
+   Because `scheduler.step(avg_loss)` in [`diffcsp/cli/train.py`](../diffcsp/cli/train.py#L719) tracked training loss rather than validation loss, the scheduler interpreted the natural flattening of train loss around Epoch 300 as a plateau, sequentially dropping the LR: $5\times 10^{-4} \to 3\times 10^{-4} \to 1.8\times 10^{-4} \to 1.0\times 10^{-4}$.
+   However, validation loss reached its global minimum at **Epoch 320 (0.4057)** and rose steadily thereafter (**0.4373** at Epoch 500). Lowering the learning rate while validation loss was climbing trapped the model in narrow minima, accelerating training-set memorization ($0.3619 \to 0.3189$) and widening the generalization gap from $+0.0438$ to $+0.1184$.
 2. **Inductive Bias vs. Parameter Scale:**
-   With physical Euclidean bond vectors, Bessel RBFs, and Lie-algebra stabilizer projections, DiffCSP-Geo has substantially stronger inductive bias than vanilla CSPNet. Consequently, it saturated its parameter capacity on the ~27k crystals of MP-20 by **Epoch ~300 (~65,000 steps)**. For models with explicit physical metrics, training beyond 300 epochs on MP-20 risks severe overfitting without weight decay (`AdamW`) or exponential moving average (EMA) smoothing.
-   See [`docs/diffcsp-geo-study.md`](diffcsp-geo-study.md) for full quantitative tables.
+   With physical Euclidean bond vectors, Bessel RBFs, and Lie-algebra stabilizer projections, `DiffCSP-Geo` has substantially stronger inductive bias than vanilla `CSPNet` and saturated its 12.28M parameter capacity on MP-20 (~27k crystals) by **Epoch ~300 (~65,000 steps)**.
+
+---
+
+## 3. Mitigations Applied in `diffcsp/cli/train.py`
+
+In commits `561bb8f` (2026-09-16), `9a4aa98` / `6dba3dc` (2026-09-29), and `bd81c4c` (2026-09-30), the following mitigations were implemented for `--model geov2`, `--model geo_orb`, and packed datasets (`--data_dir`):
+
+1. **Edge-Budget Batching (`EdgeBudgetBatchSampler`, `diffcsp/data/packed.py`):**
+   When training on packed datasets (`--data_dir` with `--max_edges_per_batch 64000`), batches are formed by bounding $\sum_i N_i^2 \le 64,000$ full-cell edges per GPU rather than fixed structure count, eliminating the heavy-tailed batch edge explosion across DDP ranks.
+2. **`AdamW` + Linear Warmup + Cosine Annealing + EMA (`diffcsp/cli/train.py:345-372`):**
+   - `--model geov2` and `--model geo_orb` use `AdamW` ($\text{weight\_decay}=10^{-4}$) with linear warmup followed by cosine decay to $10^{-6}$ (per-step when `--warmup_steps` is passed, or per-epoch otherwise), plus `EMAModel(decay=0.9999)` evaluated at validation and inference.
+   - On MP-20 (`say1phjr`, 400 epochs, 2026-09-13), this lowered peak validation loss from $0.4057$ (`DiffCSP-Geo`) to **$0.3936$** (at epoch 300).
+   - On Alex-MP-20 (`ua1g6od4`, 150 epochs, 2026-09-29), validation loss decreased monotonically to **$0.3035$** with zero overfitting.
+3. **DDP-Safe Non-Finite Gradient Skipping (`diffcsp/cli/train.py:684-691`):**
+   After `loss.backward()`, all DDP ranks check `torch.isfinite` on the all-reduced gradient norms and synchronously zero and skip any non-finite step without hanging collective communication.
+4. **LR Scaling for Smaller Effective Batches on the LeMat $E_{\text{hull}} \le 0.1$ Slice (`bd81c4c`, 2026-09-30):**
+   On LeMat-Bulk, the $E_{\text{hull}} \le 0.1\text{ eV}$ slice has larger average cells (~100 structures per 64k-edge batch vs ~160 on full LeMat). At peak $\text{lr}=10^{-3}$, `geov2_lemat_a_ehull01` (W&B [`t6l9qjp7`](https://wandb.ai/symmetry-advantage/diffcsp/runs/t6l9qjp7)) diverged at epoch 15 (train loss $0.399 \to 0.886$). Lowering peak LR to $5\times 10^{-4}$ in `geov2_lemat_a_ehull01_lr5e4` (W&B [`rnj30hh2`](https://wandb.ai/symmetry-advantage/diffcsp/runs/rnj30hh2)) converged smoothly across all 100 epochs to `val_loss = 0.3088` (see [`docs/lemat-geov2-variants.md`](lemat-geov2-variants.md)).
+
+---
+
+## 4. Remaining Untried Refinements
+
+Two general training-loop refinements from the initial diagnosis have **not yet been applied** to [`diffcsp/cli/train.py`](../diffcsp/cli/train.py) and are documented in [`docs/ideas/training-and-capacity-refinements.md`](ideas/training-and-capacity-refinements.md):
+- Replacing elementwise `torch.nn.utils.clip_grad_value_(params_to_train, 0.4)` (`train.py:699`) with global norm clipping `torch.nn.utils.clip_grad_norm_(params_to_train, max_norm=0.5)`.
+- Stepping `ReduceLROnPlateau` on validation loss rather than `avg_loss` (`train.py:719`) for the legacy `--model cspnet`, `--model orb`, and `--model geo` paths.

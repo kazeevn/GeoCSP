@@ -1,6 +1,10 @@
 # Why the asymmetric-unit model loses the high-DoF structures
 
-`docs/wyckoff-innovations-study.md` reports that the asymmetric-unit model (Innovations
+**Date:** 2026-09-11  
+**Code:** commits `f06f75d` (orbit-collapse ablation and layer divergence) and `ec06e6d` (viewpoint gauge and setting augmentation analysis); asymmetric-unit model introduced in `57895fd`.  
+**Checkpoints:** `vanilla-diffcsp` (`data/mp-20/test_ckpt.pt`), `asymm-inno1` (`runs/mp20_wyckoff/wyckoff_mp20_full_best.pt`, ep 210), `asymm-inno2` (`runs/mp20_wyckoff/wyckoff_inno2_best.pt`, ep 510; trained locally before default W&B logging was enabled).
+
+[`docs/archive/wyckoff-innovations-study.md`](archive/wyckoff-innovations-study.md) reports that the asymmetric-unit model (Innovations
 1 and 2) matches or beats vanilla DiffCSP++ up to DoF 5 and then falls behind, by 4.8
 points per-trial at DoF 6-8 and 5.9 at DoF 9+. It attributes the loss to **multiplicity
 ensembling**: the full-cell model emits m score vectors per orbit and averages them,
@@ -18,7 +22,7 @@ is not equivariant. The divergence compounds with depth and with orbit size, and
 hardest on the coordinate head. It shows up in the generated structures as too-short
 contacts. The lattice head is unaffected -- it is in fact better than vanilla's.
 
-Two genuine biases *do* exist in the asymmetric-unit code (§5). Neither causes this.
+Two genuine biases *do* exist in the coordinate projection and sampler initialization code (§5). Neither causes this.
 §7 measures the symmetry gauge the collapse actually discards, and shows why
 WyckoffTransformer's setting augmentation is not the one that would fix it.
 
@@ -174,13 +178,13 @@ it loses vanilla's implicit multiplicity weighting, but that turns out to help: 
 relative volume error is 0.61x vanilla's overall, 0.80x at DoF >= 9. The deficit is
 entirely in the coordinates.
 
-## 5. Two real biases in the asymmetric-unit code
+## 5. Two real biases in the subspace projection and sampler code
 
-Neither explains §1-4. Both are worth fixing on their own.
+Neither explains §1-4. Both also affect `GeoDiffusion`, `GeoV2Diffusion`, and `GeoOrbDiffusion` (which inherited `WyckoffDiffusion`'s projector and sampler initialization logic) and remain untried fixes — see [`docs/ideas/tangent-subspace-prior-and-projectors.md`](ideas/tangent-subspace-prior-and-projectors.md).
 
-### 5.1 Oblique projectors -- asymmetric-unit specific
+### 5.1 Oblique projectors
 
-`wyckoff_diffusion.py` injects coordinate noise as `site_P @ eps`; `diffusion.py` injects
+`wyckoff_diffusion.py` (as well as `geo_diffusion.py`, `geo_v2_diffusion.py`, and `geo_orb_diffusion.py`) injects coordinate noise as `Pa @ eps`; `diffusion.py` injects
 `ops_inv[anchor] @ eps`, where `ops_inv = pinv(rotation_matrix)`. For a symmetric
 projector `pinv(M) == M` and the two agree. But pyXtal's `wp.ops[0].rotation_matrix` is
 idempotent and **not always symmetric** -- the Reynolds average `(1/|H|) sum R` is a
@@ -200,12 +204,11 @@ schedules on these sites.
 
 Scope: 240 of 4903 sites in the benchmark set (4.9%), present in **22.0%** of DoF < 9
 structures but only **1.1%** of DoF >= 9. It lives in the bins where the asymmetric model
-wins, so it cannot be the cause of §1 -- but fixing it should be free upside there. Use
-`pinv(M)` for the noise, matching `diffusion.py`, or symmetrise the projector.
+wins, so it cannot be the cause of §1 -- but fixing it should be free upside there.
 
-### 5.2 Non-uniform sampler prior -- shared with vanilla
+### 5.2 Non-uniform sampler prior -- shared across all models
 
-Both samplers initialise coordinates as `u = rand(K, 3); x = (M @ u + x0) % 1`. Projecting
+All samplers (`diffusion.py`, `wyckoff_diffusion.py`, `geo_diffusion.py`, `geo_v2_diffusion.py`, `geo_orb_diffusion.py`) initialise coordinates as `u = rand(K, 3); x = (M @ u + x0) % 1`. Projecting
 a uniform cube is not uniform on the subspace unless the tangent space is axis-aligned.
 The free parameter's distribution, decile mass (uniform = 0.100 each):
 
@@ -221,31 +224,19 @@ starts such a site near 0 or 1. The forward process has the matching defect: the
 per-component noise std on that site is `sigma/sqrt(3)`, so at `sigma_end = 0.5` the
 terminal distribution retains a ~19% first Fourier mode instead of converging to uniform.
 
-Both models do this identically (`diffusion.py` and `wyckoff_diffusion.py` alike), so it
-does not move the comparison, but it costs both on trigonal/hexagonal/cubic special
-positions. The fix is to draw the free parameters uniformly in the tangent basis rather
-than projecting a uniform cube.
+Because every model in the repo does this identically, it does not move the comparison,
+but it costs all of them on trigonal/hexagonal/cubic special positions.
 
-## 6. What follows
+## 6. Subsequent outcomes and untried repairs
 
-The diagnosis argues for repairing Innovation 1 rather than abandoning it -- the speedup
-is real and the geometric information is provably intact after one hop.
+Two structural responses to this diagnosis were tested:
 
-- **The edge is already individuated; the node state is not.** `frac_diff` carries the
-  replica's actual position, so the message knows which replica it came from -- but
-  `hj = site_features[source_sites]` throws that away in the source state. Conditioning
-  the message on the replica's operation, e.g. `hj = MLP([h_{s(j)}, embed(R_j)])` in
-  `WyckoffCSPLayer`, restores per-replica distinguishability at unchanged `K x N` cost.
-- **Or make the featurisation equivariant**, which is the premise Innovation 1 was written
-  under. Innovation 3's Cartesian/Bessel route gives invariant `|r|` and equivariant
-  direction, under which congruent environments *do* produce the same state and the
-  collapse becomes genuinely lossless.
-- **Or randomise the orbit representative during training** (§7), which targets the same
-  property statistically rather than structurally: draw `r` per site and rebuild
-  `ops_i <- ops_i . ops_r^-1`, `P -> R P R^-1`. Cheapest of the three, no architecture
-  change. Note this is *not* the Wyckoff-setting augmentation used by
-  WyckoffTransformer, which is a no-op on most of the affected structures -- see §7.
-- Fix §5.1 and §5.2 independently; they are cheap and affect the low-DoF bins.
+1. **Equivariant message passing on the asymmetric unit (`WyckoffPaiNN`, 2026-09-12, commits `c4793d7` and `ac8a2f5`; archived in [`docs/archive/equivariant-painn-study.md`](archive/equivariant-painn-study.md)).**
+   Rotating anchor vector features via the exact Cartesian space-group isometry $\mathbf{M}_j = \mathbf{L}^{-1} R_j^\top \mathbf{L} \in O(3)$ eliminated the anchor viewpoint gauge identically, but replacing global fractional Fourier features with a finite 6.0 Å radial cutoff starved message passing on expanded early-diffusion cells (62.0% per-trial / 74.1% best-of-3 match rate at 210 epochs).
+2. **Retaining the full-cell $N$-atom graph while adding Cartesian Bessel RBFs and tangent-space projection (`DiffCSP-Geo`, 2026-09-13, commit `d7b1a7b`, W&B `7jdhrv2f`; see [`docs/diffcsp-geo-study.md`](diffcsp-geo-study.md)).**
+   Keeping all $N$ atoms preserves the per-replica hidden states and global torus Fourier coverage while adding Euclidean distance awareness and Lie-algebra tangent projections, reaching **83.5% per-trial / 88.4% best-of-3** on MP-20 (+3.84% best-of-3 on $\text{DoF} \ge 6$).
+
+Three cheaper ways to repair the $K \times N$ asymmetric-unit graph directly (conditioning `WyckoffCSPLayer` edges on replica operations $R_j$, randomising the orbit anchor representative during training, or combining `WyckoffPaiNN` with periodic Fourier features / a 10–12 Å cutoff), along with the fixes for §5.1 and §5.2, have not yet been tried and are documented in [`docs/ideas/asymmetric-unit-repairs.md`](ideas/asymmetric-unit-repairs.md) and [`docs/ideas/tangent-subspace-prior-and-projectors.md`](ideas/tangent-subspace-prior-and-projectors.md).
 
 ## 7. Would Wyckoff-setting augmentation fix it?
 
