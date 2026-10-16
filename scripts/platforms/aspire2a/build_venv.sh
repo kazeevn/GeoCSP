@@ -3,7 +3,7 @@
 #
 #   bash scripts/platforms/aspire2a/build_venv.sh
 #
-# uv.lock pins torch 2.14.0+cu133 from zeus's local wheel index, which does not exist
+# uv.lock pins torch 2.14.1+cu134 from zeus's local wheel index, which does not exist
 # here, so `uv sync` cannot be used. Instead, inside the image:
 #   1. `uv pip compile pyproject.toml` (+ extras) -> requirements-aspire2a.txt, committed,
 #      so the dependency set of every run is recorded in git;

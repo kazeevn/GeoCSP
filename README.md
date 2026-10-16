@@ -65,13 +65,18 @@ uv run pytest
 
 Platform configurations and convenience scripts are housed under `scripts/platforms/<platform>`:
 
-- **Zeus**: Host-specific `uv.toml` and initialization script:
+- **Zeus**: Host-specific `uv.toml` and initialization script for Python 3.14 with local PyTorch 2.14.1+cu134 wheels:
   ```bash
   scripts/platforms/zeus/env_init.sh
   ```
+  See [docs/platforms/zeus/environment.md](docs/platforms/zeus/environment.md) for full configuration details.
 - **Iapetus**: PyTorch 2.14 universal container execution:
   ```bash
   scripts/platforms/iapetus/run_container.sh uv run pytest
+  ```
+- **ASPIRE 2A**: Singularity environment builder with containerized Python 3.12:
+  ```bash
+  bash scripts/platforms/aspire2a/build_venv.sh
   ```
 
 ---

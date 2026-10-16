@@ -1,4 +1,4 @@
-# uv configuration for WyFormer on zeus.
+# uv configuration for DiffCSP on zeus.
 #
 # Copy it to the repository root, where uv looks for it:
 #     cp scripts/platforms/zeus/uv.toml uv.toml
@@ -6,6 +6,10 @@
 #
 # The root uv.toml is gitignored, because every setting below is true of this
 # machine only. See docs/platforms/zeus/environment.md.
+
+override-dependencies = [
+    "dm-tree>=0.1.10",
+]
 
 [[index]]
 name = "zeus"

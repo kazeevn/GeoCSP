@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "DiffCSP++: Crystal Structure Prediction via Space Group Constrained Diffusion with MLIP Backbone"
 readme = "README.md"
 authors = [{ name = "Nikita Kazeev", email = "kazeevn@gmail.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
     "torch>=2.0.0",
     "torch-geometric>=2.4.0",
@@ -40,6 +40,11 @@ diffcsp-inference = "diffcsp.cli.inference:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["diffcsp"]
+
+[tool.uv]
+override-dependencies = [
+    "dm-tree>=0.1.10",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

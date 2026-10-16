@@ -27,9 +27,19 @@ for extra in ${DIFFCSP_EXTRAS}; do
 done
 
 # uv sync creates .venv if it is missing, honouring requires-python from
-# pyproject.toml. It is deliberately not preceded by `uv venv`, which would
-# destroy and recreate an existing environment.
-uv sync "${extra_args[@]}" "$@"
+# pyproject.toml. On zeus, default to the system Python 3.14 interpreter.
+uv sync --python "${UV_PYTHON:-/usr/bin/python3}" "${extra_args[@]}" "$@"
+
+# Link NVSHMEM library into Torch's $ORIGIN directory if needed.
+# Keep --dry-run read-only and honour scratch/worktree environments.
+if [[ " $* " != *" --dry-run "* ]]; then
+    for torch_lib in "${UV_PROJECT_ENVIRONMENT:-.venv}"/lib/python*/site-packages/torch/lib; do
+        nvshmem_lib=/usr/lib/x86_64-linux-gnu/nvshmem/13/libnvshmem_host.so.3
+        if [[ -d "$torch_lib" && -f "$nvshmem_lib" && ! -e "$torch_lib/libnvshmem_host.so.3" ]]; then
+            ln -s "$nvshmem_lib" "$torch_lib/libnvshmem_host.so.3"
+        fi
+    done
+fi
 
 cat <<MSG
 
