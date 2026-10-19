@@ -11,6 +11,12 @@ and the hull:
 - polymorph counting: unique non-saddle relaxed structures with
   E_hull <= 0.1 eV/atom per gene, on flat and DoF-dependent budgets.
 
+In the formula track (inits from gen_init.py --genes) every sample has its own
+gene, sampled by a model from the entry's formula. Then the space-group checks
+compare against the sample's gene, the DoF budgets are skipped (they are per gene),
+and a "genes" block reports how often the samples recover the ground truth's space
+group and gene, and Recall@N with the samples ranked by the model's likelihood.
+
     uv run python bench/evaluate_csp.py --label diffcsp-geo \\
         --inits runs/bench/mp20/inits_t20.pkl \\
         --relaxed runs/bench/mp20/relaxed_geo_t20.shard*.pkl \\
@@ -103,9 +109,42 @@ def _stats(x):
             "frac_le_0.1": float(np.mean(x <= cm.METASTABLE_E_HULL)), "frac_le_0": float(np.mean(x <= 0))}
 
 
+def canonical_gene(rep):
+    """A gene as (space group, sorted (species, Wyckoff label) pairs).
+
+    Equal genes are equal; unequal ones may still describe the same structure, since a
+    representation is only unique up to the space group's normalizer (origin choice).
+    """
+    return rep["group"], tuple(sorted((str(sp), lab) for sp, labs in zip(rep["species"], rep["sites"]) for lab in labs))
+
+
+def gene_metrics(entries, per_entry, slots, gene_of, ns):
+    """Formula track: does the model's sampling recover the ground truth's space group and gene?"""
+    gt_genes = [canonical_gene(e["rep"]) for e in entries]
+    genes = [[gene_of.get((r["entry"], r["trial"])) if r else None for r in s] for s in slots]
+    same_sg = [[g is not None and g["sg"] == gt[0] for g in gs] for gs, gt in zip(genes, gt_genes)]
+    same_gene = [[g is not None and canonical_gene(g["rep"]) == gt for g in gs] for gs, gt in zip(genes, gt_genes)]
+    flat = [g for gs in genes for g in gs if g is not None]
+    return {
+        "space_group_recall": cm.recall_at_n(same_sg, ns),
+        "gene_recall": cm.recall_at_n(same_gene, ns),
+        "distinct_genes_per_formula": float(np.mean([len({canonical_gene(g["rep"]) for g in gs if g}) for gs in genes])),
+        "distinct_space_groups_per_formula": float(np.mean([len({g["sg"] for g in gs if g}) for gs in genes])),
+        "atoms_median": float(np.median([g["n_atoms"] for g in flat])),
+        "frac_atoms_gt_gt": float(np.mean([g["n_atoms"] > e["gt"].num_sites for gs, e in zip(genes, entries)
+                                           for g in gs if g])),
+        "frac_atoms_eq_gt": float(np.mean([g["n_atoms"] == e["gt"].num_sites for gs, e in zip(genes, entries)
+                                           for g in gs if g])),
+    }
+
+
 def evaluate(entries, records, gt_records, ns, margins, dof_schedules, tol, n_jobs, count_saddles,
-             unique_tol=(cm.UNIQUE_STOL, cm.UNIQUE_ANGLE_TOL, cm.UNIQUE_LTOL)):
-    """All metrics for one regime. *records* are mlip_relax.py records (or raw-only)."""
+             unique_tol=(cm.UNIQUE_STOL, cm.UNIQUE_ANGLE_TOL, cm.UNIQUE_LTOL), trials=None, gene_of=None):
+    """All metrics for one regime. *records* are mlip_relax.py records (or raw-only).
+
+    *gene_of* maps (entry, trial) to the sampled gene in the formula track, and is None
+    in the gene track.
+    """
     rms = Parallel(n_jobs=n_jobs)(
         delayed(_match_record)(entries[r["entry"]]["gt"], r, tol) for r in tqdm(records, desc="matching")
     )
@@ -121,9 +160,24 @@ def evaluate(entries, records, gt_records, ns, margins, dof_schedules, tol, n_jo
     # A gene with no surviving sample still counts, as a miss.
     per_entry = [by_entry.get(i, []) for i in range(len(entries))]
     relaxed = any(r.get("relaxed_sym") is not None for r in records)
+    trials = trials or max((r["trial"] + 1 for r in records), default=0)
+    # Samples by trial, None where a trial left none: "the first N samples" are trials < N,
+    # so a failed draw is a miss rather than a slot the next trial moves up into.
+    slots = []
+    for recs in per_entry:
+        s = [None] * trials
+        for r in recs:
+            s[r["trial"]] = r
+        slots.append(s)
+
+    def first(recs, n):
+        return [r for r in recs if r["trial"] < n]
 
     def matched(key):
-        return [[r["rms"][key] is not None for r in recs] for recs in per_entry]
+        return [[r is not None and r["rms"][key] is not None for r in s] for s in slots]
+
+    def energies(key):
+        return [[r[key] if r else None for r in s] for s in slots]
 
     def readout(key):
         flat = [r["rms"][key] for r in records]
@@ -135,23 +189,36 @@ def evaluate(entries, records, gt_records, ns, margins, dof_schedules, tol, n_jo
     res = {"n_entries": len(entries), "n_samples": len(records), "ns": list(ns), "tolerances": tol,
            "unique_tolerances": unique_tol,
            "classic": readout("raw")}
+    if gene_of:
+        res["genes"] = gene_metrics(entries, per_entry, slots, gene_of, ns)
+        # The model's own ranking: its joint log-probability of space group and gene.
+        def nll_of(r):
+            g = gene_of.get((r["entry"], r["trial"])) if r else None
+            return -(g["log_p_sg"] + g["log_p_gene"]) if g else None
+
+        nll = [[nll_of(r) for r in s] for s in slots]
+        res["classic"]["likelihood_ranked_recall"] = cm.ranked_recall_at_n(matched("raw"), nll, ns)
     if not relaxed:
         return res
+
+    def gene_sg(r):
+        return gene_of[(r["entry"], r["trial"])]["sg"] if gene_of else entries[r["entry"]]["rep"]["group"]
 
     res["relax"] = {
         "n_errors": sum(r["error"] is not None for r in records),
         "median_seconds": float(np.median([r["seconds"] for r in records if r["seconds"] is not None])),
         "frac_free_left_gene_spacegroup": float(np.mean([
-            r["sg_free"] != entries[r["entry"]]["rep"]["group"] for r in records if r["sg_free"] is not None])),
+            r["sg_free"] != gene_sg(r) for r in records if r["sg_free"] is not None])),
         "frac_sym_left_gene_spacegroup": float(np.mean([
-            r["sg_sym"] != entries[r["entry"]]["rep"]["group"] for r in records if r["sg_sym"] is not None])),
+            r["sg_sym"] != gene_sg(r) for r in records if r["sg_sym"] is not None])),
     }
 
     res["mlip"] = {}
     for ro in READOUTS:
         d = readout(f"relaxed_{ro}")
-        d["ranked_recall"] = cm.ranked_recall_at_n(
-            matched(f"relaxed_{ro}"), [[r[f"e_orb_{ro}"] for r in recs] for recs in per_entry], ns)
+        d["ranked_recall"] = cm.ranked_recall_at_n(matched(f"relaxed_{ro}"), energies(f"e_orb_{ro}"), ns)
+        if gene_of:
+            d["likelihood_ranked_recall"] = cm.ranked_recall_at_n(matched(f"relaxed_{ro}"), nll, ns)
         pairs = [(r["rms"]["raw"], r["rms"][f"relaxed_{ro}"]) for r in records
                  if r["rms"]["raw"] is not None and r["rms"][f"relaxed_{ro}"] is not None]
         d["rms_before_after"] = {"n_pairs": len(pairs),
@@ -174,9 +241,9 @@ def evaluate(entries, records, gt_records, ns, margins, dof_schedules, tol, n_jo
                 for n in ns:
                     outcomes = []
                     for i, recs in enumerate(per_entry):
-                        first = recs[:n]
-                        es = [r["e_orb_sym"] for r in first if r["e_orb_sym"] is not None]
-                        outcomes.append(cm.three_way(any(r["rms"]["relaxed_sym"] is not None for r in first),
+                        kept = first(recs, n)
+                        es = [r["e_orb_sym"] for r in kept if r["e_orb_sym"] is not None]
+                        outcomes.append(cm.three_way(any(r["rms"]["relaxed_sym"] is not None for r in kept),
                                                      min(es) if es else None, e_ref.get(i), margin))
                     res["three_way"][f"{ref}/margin_{margin:g}/N{n}"] = cm.breakdown(outcomes)
         gt_m = Parallel(n_jobs=n_jobs)(
@@ -208,18 +275,20 @@ def evaluate(entries, records, gt_records, ns, margins, dof_schedules, tol, n_jo
 
     # Polymorph counting: neither rewards nor penalises recovering the ground truth,
     # which is counted as an ordinary polymorph ("count"); "count_novel" drops it.
-    dofs = [representation_dof(e["rep"])[0] for e in entries]
     budgets = {f"N{n}": [n] * len(entries) for n in ns}
-    for s in dof_schedules:
-        budgets[f"dof[{s}]"] = [cm.dof_budget(d, s) for d in dofs]
+    # A DoF budget is set by the gene, which the formula track does not fix.
+    if not gene_of:
+        dofs = [representation_dof(e["rep"])[0] for e in entries]
+        for s in dof_schedules:
+            budgets[f"dof[{s}]"] = [cm.dof_budget(d, s) for d in dofs]
     res["polymorphs"] = {}
     for name, per_gene in budgets.items():
         jobs = []
         n_meta = n_seen = 0
         for recs, b in zip(per_entry, per_gene):
-            first = recs[:b]
-            n_seen += len(first)
-            cands = [(r["relaxed_sym"], r["e_orb_sym"], r["rms"]["relaxed_sym"] is not None) for r in first
+            kept = first(recs, b)
+            n_seen += len(kept)
+            cands = [(r["relaxed_sym"], r["e_orb_sym"], r["rms"]["relaxed_sym"] is not None) for r in kept
                      if r["ehull_sym"] is not None and r["ehull_sym"] <= cm.METASTABLE_E_HULL
                      and (count_saddles or r["saddle"] is False)]
             n_meta += len(cands)
@@ -268,8 +337,19 @@ def print_summary(label, res):
         d = res["mlip"][ro]
         rows.append((f"relaxed {ro}", d["recall"], d["mean_rms_matched"]))
         rows.append((f"relaxed {ro}, ranked", d["ranked_recall"], float("nan")))
+    if "genes" in res:
+        rows.insert(1, ("classic, likelihood", res["classic"]["likelihood_ranked_recall"], float("nan")))
+        for ro in READOUTS if "mlip" in res else ():
+            rows.append((f"relaxed {ro}, likelihood", res["mlip"][ro]["likelihood_ranked_recall"], float("nan")))
+        rows += [("GT space group", res["genes"]["space_group_recall"], float("nan")),
+                 ("GT gene (exact)", res["genes"]["gene_recall"], float("nan"))]
     for name, rec, rms in rows:
         print(f"{name:<22}" + "  ".join(f"{100 * rec[n]:>6.1f}%" for n in ns) + f"   {rms:.4f}")
+    if "genes" in res:
+        g = res["genes"]
+        print(f"per formula: {g['distinct_genes_per_formula']:.1f} distinct genes, "
+              f"{g['distinct_space_groups_per_formula']:.1f} space groups; median {g['atoms_median']:.0f} atoms, "
+              f"{100 * g['frac_atoms_eq_gt']:.1f}% the ground truth's count, {100 * g['frac_atoms_gt_gt']:.1f}% more")
     if "mlip" not in res:
         return
     print("\nthree-way (matched / lower / failure), sym readout:")
@@ -320,6 +400,7 @@ def main():
         blob = pickle.load(f)
     entries, trials = blob["entries"], blob["trials"]
     ns = sorted({n for n in a.ns if n <= trials} | {trials})
+    gene_of = {(d["entry"], d["trial"]): d["gene"] for d in blob["draws"] if "gene" in d} or None
 
     metas = []
     if a.relaxed:
@@ -328,6 +409,8 @@ def main():
         with open(a.preds, "rb") as f:
             records = [{"entry": p["entry"], "trial": p["trial"], "raw": p["pred"]} for p in pickle.load(f)]
     gt_metas, gt_records = load_records(a.gt_relaxed) if a.gt_relaxed else ([], [])
+    # The ground truth may have been relaxed for more entries than these inits hold (--limit).
+    gt_records = [g for g in gt_records if g["entry"] < len(entries)]
     if metas and gt_metas:
         for k in ("relax_mlip", "score_mlip"):
             if metas[0][k] != gt_metas[0][k]:
@@ -336,12 +419,12 @@ def main():
     tol = (a.stol, a.angle_tol, a.ltol)
     unique_tol = (a.unique_stol, a.unique_angle_tol, a.unique_ltol)
     res = evaluate(entries, records, gt_records, ns, a.margins, a.dof_schedules, tol, a.n_jobs, a.count_saddles,
-                   unique_tol)
+                   unique_tol, trials=trials, gene_of=gene_of)
     res["label"] = a.label
     res["meta"] = {"date": datetime.datetime.now().isoformat(timespec="seconds"),
                    "diffcsp_commit": git_commit(Path(__file__).resolve().parent),
                    "args": vars(a), "trials": trials, "relaxed_meta": metas[0] if metas else None,
-                   "gt_meta": gt_metas[0] if gt_metas else None}
+                   "gt_meta": gt_metas[0] if gt_metas else None, "genes_meta": blob.get("genes_meta")}
 
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     with open(a.out, "wb") as f:
@@ -363,7 +446,10 @@ def main():
                 "git_commit": res["meta"]["diffcsp_commit"],
                 "wyckoff_transformer_commit": rm.get("wyckoff_transformer_commit"),
                 "relax_mlip": rm.get("relax_mlip"), "score_mlip": rm.get("score_mlip"),
-                "hull": rm.get("hull"), "relax_args": rm.get("args")},
+                "hull": rm.get("hull"), "relax_args": rm.get("args"),
+                "track": "formula" if gene_of else "gene",
+                "gene_model": (blob.get("genes_meta") or {}).get("model"),
+                "gene_args": (blob.get("genes_meta") or {}).get("args")},
     )
     summary = {k: v for k, v in res.items()
                if k not in ("per_entry", "meta", "label", "tolerances", "unique_tolerances", "ns")}
