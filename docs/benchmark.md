@@ -235,10 +235,10 @@ The same 1000 MP-20 genes as Result 1, × 20 `from_random` draws = 19,997 sample
 
 | regime | samples | relaxed | scored | DiffCSPNew | WyckoffTransformer | W&B run (`symmetry-advantage/diffcsp`) |
 |---|---|---|---|---|---|---|
-| `pyxtal-only (control)` | `run_none.py` | 2026-10-16/17 | 2026-10-18 | `525c232` + uncommitted CSP-benchmark code | `a3e8512` | [`zw2t1pj8`](https://wandb.ai/symmetry-advantage/diffcsp/runs/zw2t1pj8) |
+| `pyxtal-only (control)` | `run_none.py` | 2026-10-16/17 | 2026-10-18 | `525c232` + then-uncommitted code, committed as `33e3224` | `a3e8512` | [`zw2t1pj8`](https://wandb.ai/symmetry-advantage/diffcsp/runs/zw2t1pj8) |
 | `diffcsp-geo (500e)` | `runs/mp20_geo/geo_mp20_500e_best.pt` ([`7jdhrv2f`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f), ep 320) | 2026-10-17 | 2026-10-18 | same | same | [`1t20dz31`](https://wandb.ai/symmetry-advantage/diffcsp/runs/1t20dz31) |
 
-The ground truths were relaxed once (2026-10-16) and serve both regimes. Environment: the
+The run's benchmark code is the code in `33e3224`, except for two changes made after it: `mlip_relax.py`'s package-provenance metadata and the removal of the overlay handling. The ground truths were relaxed once (2026-10-16) and serve both regimes. Environment: the
 PYTHONPATH overlay described in the Zeus environment's *History* paragraph. Its ORB energies
 match the current locked setup to within 4e-5 eV/atom. Four relaxation processes shared one
 RTX 6000 Ada; median time per structure was 10.0 s for the control and 3.5 s for Geo.
