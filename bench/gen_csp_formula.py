@@ -196,6 +196,9 @@ def main():
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--repair", action="store_true",
+                    help="re-sample only the formulas that failed in an existing --out; seeds are per "
+                         "entry, so the result is what a full rerun would give")
     a = ap.parse_args()
 
     from pymatgen.core import Composition
@@ -205,7 +208,17 @@ def main():
         entries = pickle.load(f)
     if a.limit:
         entries = entries[: a.limit]
-    formulas = [Composition(e["gt"].composition.reduced_formula).reduced_formula for e in entries]
+    # Plain element-count formulas: pymatgen's reduced_formula groups units in parentheses,
+    # e.g. Li(TiS2)3, which WyckoffTransformer's parse_formula rejects.
+    formulas = ["".join(f"{el}{int(n)}" for el, n in e["gt"].composition.reduced_composition.as_dict().items())
+                for e in entries]
+    old = None
+    if a.repair:
+        with open(a.out, "rb") as f:
+            old = pickle.load(f)
+        todo = sorted(old["meta"]["errors"])
+    else:
+        todo = range(len(entries))
 
     device = torch.device(a.device)
     trainer = load_trainer(device, wandb_run=a.wandb_run, wandb_entity=a.wandb_entity, wandb_project=a.wandb_project)
@@ -219,16 +232,20 @@ def main():
         by_system = training_hull(a.hull_dataset, a.hull_splits)
         conditions = [{"formation_energy_per_atom": hull_formation_energy(f, by_system)}
                       for f in tqdm(formulas, desc="training hull")]
+        if old is not None and any(abs(c["formation_energy_per_atom"] - o["formation_energy_per_atom"]) > 1e-9
+                                   for c, o in zip(conditions, old["meta"]["conditions"])):
+            raise ValueError("the training-hull conditions differ from the run being repaired")
 
     sampler = GeneSampler(trainer, device, a.max_atoms, a.temperature)
-    genes, errors = [], {}
-    for i, formula in enumerate(tqdm(formulas, desc="sampling genes")):
+    genes = old["genes"] if old is not None else [[None] * a.samples for _ in entries]
+    errors = {}
+    for i in tqdm(todo, desc="sampling genes"):
         try:
-            genes.append(sampler.sample(formula, a.samples, conditions[i], seed=a.seed * 1_000_003 + i,
-                                        n_atoms=entries[i]["gt"].num_sites if a.given_cell else None))
+            genes[i] = sampler.sample(formulas[i], a.samples, conditions[i], seed=a.seed * 1_000_003 + i,
+                                      n_atoms=entries[i]["gt"].num_sites if a.given_cell else None)
         except Exception as e:  # an element outside the vocabulary, say: the formula gets no samples
             errors[i] = f"{type(e).__name__}: {e}"
-            genes.append([None] * a.samples)
+            genes[i] = [None] * a.samples
 
     import wandb
 
@@ -243,6 +260,9 @@ def main():
                   "condition_features": features, "composition_conditioning": trainer.composition_conditioning},
         "formulas": formulas, "conditions": conditions, "errors": errors,
     }
+    if old is not None:
+        meta["repaired"] = {"entries": list(todo), "previous_errors": old["meta"]["errors"],
+                            "previous_meta": {k: v for k, v in old["meta"].items() if k not in ("formulas", "conditions")}}
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     with open(a.out, "wb") as f:
         pickle.dump({"genes": genes, "meta": meta}, f)
