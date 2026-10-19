@@ -33,6 +33,16 @@ uv sync --python "${UV_PYTHON:-/usr/bin/python3}" "${extra_args[@]}" "$@"
 # Link NVSHMEM library into Torch's $ORIGIN directory if needed.
 # Keep --dry-run read-only and honour scratch/worktree environments.
 if [[ " $* " != *" --dry-run "* ]]; then
+    # torch-scatter/torch-sparse are optional accelerators (diffcsp/core/scatter.py)
+    # that exist for this host's Torch only as local wheels, so they are not in
+    # the lock -- and an exact `uv sync` removes them. Put them back every time.
+    scatter_wheels=(/mnt/hdd/torch_wheels/torch_scatter-2.1.2-cp314-cp314-linux_x86_64.whl
+                    /mnt/hdd/torch_wheels/torch_sparse-0.6.18-cp314-cp314-linux_x86_64.whl)
+    if [[ -f "${scatter_wheels[0]}" && -f "${scatter_wheels[1]}" ]]; then
+        uv pip install --python "${UV_PROJECT_ENVIRONMENT:-.venv}/bin/python" \
+            --no-deps --no-index "${scatter_wheels[@]}"
+    fi
+
     for torch_lib in "${UV_PROJECT_ENVIRONMENT:-.venv}"/lib/python*/site-packages/torch/lib; do
         nvshmem_lib=/usr/lib/x86_64-linux-gnu/nvshmem/13/libnvshmem_host.so.3
         if [[ -d "$torch_lib" && -f "$nvshmem_lib" && ! -e "$torch_lib/libnvshmem_host.so.3" ]]; then

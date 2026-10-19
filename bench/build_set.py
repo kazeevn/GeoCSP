@@ -68,7 +68,9 @@ def main():
     print(f"{a.test_csv}: {len(df):,} rows")
     if a.max_e_hull is not None:
         n0 = len(df)
-        df = df[df["energy_above_hull"].fillna(np.inf) <= a.max_e_hull].reset_index(drop=True)
+        # LeMat exports call it energy_above_hull, MP-20's CSVs e_above_hull.
+        col = "energy_above_hull" if "energy_above_hull" in df.columns else "e_above_hull"
+        df = df[df[col].fillna(np.inf) <= a.max_e_hull].reset_index(drop=True)
         print(f"  E_hull <= {a.max_e_hull} eV: kept {len(df):,} of {n0:,} ({100 * len(df) / n0:.1f}%)")
     rng = np.random.default_rng(a.seed)
     # oversample: some representations fail to round-trip through from_random

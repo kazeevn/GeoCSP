@@ -53,6 +53,8 @@ Cons:
 Variant: count novelty with [templates](/home/kna/WyckoffTransformer/research_notebooks/check_template_novelty.ipynb) or [disordered parents](https://github.com/kazeevn/OpenDisorder/).
 
 # Reconstructing Wyckoff genes
+> **Implemented** (2026-10-16): `bench/mlip_relax.py` and `bench/evaluate_csp.py`, with PET-OAM-XL relaxation and ORB `orb_conserv_inf` energies / LeMat-Bulk E_hull. The current protocol and its choices are in [`../benchmark.md`](../benchmark.md#csp-benchmark--wyckoff-gene-track); first results (2026-10-18) in Result 3 there. The formula-only CSP track above is still an idea.
+
 a. Given a Wyckoff gene, find the lowest-energy structure
 b. Given a Wyckoff gene, find all the metastable polymorphs conforming to the gene
 

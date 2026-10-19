@@ -5,7 +5,7 @@ import os
 # keeps a stray tensor in a prediction from making every worker initialize CUDA.
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-import argparse, pickle
+import argparse, pickle, sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -13,27 +13,8 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-
-def _score(gt, pred, stol, angle_tol, ltol):
-    if pred is None:
-        return None
-    try:
-        vol = pred.lattice.volume
-        if vol < 0.1 or np.isnan(vol) or np.isinf(vol):
-            return None
-        if any(np.isnan(pred.lattice.abc)) or any(x <= 0 for x in pred.lattice.abc):
-            return None
-    except Exception:
-        return None
-
-    from pymatgen.analysis.structure_matcher import StructureMatcher
-
-    m = StructureMatcher(stol=stol, angle_tol=angle_tol, ltol=ltol)
-    try:
-        r = m.get_rms_dist(gt, pred)
-        return None if r is None else float(r[0])
-    except Exception:
-        return None
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from csp_metrics import match_rms as _score  # noqa: E402
 
 
 def main():

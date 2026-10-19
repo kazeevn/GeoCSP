@@ -33,6 +33,16 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.3.0",
 ]
+# CSP benchmarks (bench/mlip_relax.py, bench/evaluate_csp.py): WyckoffTransformer's
+# relaxer, MLIP registry and LeMat-Bulk hulls, and UPET for PET-OAM-XL. On zeus,
+# UPET's Torch-ABI dependencies (metatomic-torch, metatensor-torch) resolve from
+# the local wheel index in uv.toml.
+csp-bench = [
+    "wyckoff-transformer",
+    "orb-models>=0.5.1",
+    "ase>=3.23",
+    "upet>=0.3.1",
+]
 
 [project.scripts]
 diffcsp-train = "diffcsp.cli.train:main"
@@ -45,6 +55,15 @@ packages = ["diffcsp"]
 override-dependencies = [
     "dm-tree>=0.1.10",
 ]
+
+[tool.uv.sources]
+# upet 0.3.1 needs nvalchemi-toolkit-ops>=0.4, which orb-models 0.7.0 (the latest
+# release) excludes; master allows it from this commit on. Its checkpoint URLs
+# are those of 0.7.0, so ORB energies still match the LeMat-Bulk orb_conserv_inf
+# hull. Return to a release once one includes it. The installed package reports
+# version 0.3.2.dev0: orb-models stamps the real version only at release time.
+orb-models = { git = "https://github.com/orbital-materials/orb-models", rev = "1794f852543600d1611d2a3728a95142574f5dc2" }
+wyckoff-transformer = { path = "../WyckoffTransformer", editable = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

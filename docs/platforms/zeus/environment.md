@@ -35,7 +35,24 @@ DIFFCSP_EXTRAS="dev" scripts/platforms/zeus/env_init.sh
 ### What `env_init.sh` does:
 1. Copies `scripts/platforms/zeus/uv.toml` to the project root (`uv.toml` is gitignored as machine-specific state).
 2. Executes `uv sync --python "${UV_PYTHON:-/usr/bin/python3}"` with the designated extras (`orb`, `wandb`, `dev`).
-3. Checks and ensures the link to host CUDA 13 NVSHMEM (`libnvshmem_host.so.3`) within the Torch library folder if required.
+3. Reinstalls the local `torch-scatter` / `torch-sparse` wheels. They are not in the lock, since they exist for this Torch only as local wheels, so the exact `uv sync` above removes them every time.
+4. Checks and ensures the link to host CUDA 13 NVSHMEM (`libnvshmem_host.so.3`) within the Torch library folder if required.
+
+### CSP benchmark: WyckoffTransformer and PET-OAM-XL
+
+The CSP benchmark (`bench/mlip_relax.py`, [benchmark.md](../../benchmark.md#csp-benchmark--wyckoff-gene-track)) needs the `csp-bench` extra:
+
+```bash
+DIFFCSP_EXTRAS="orb wandb dev csp-bench" scripts/platforms/zeus/env_init.sh
+```
+
+- **WyckoffTransformer** comes in editable from `../WyckoffTransformer` (`[tool.uv.sources]`), for its relaxer, MLIP registry and LeMat-Bulk hulls. Its `relax` extra is not used: `mace-torch` 0.3.16 ships a top-level `tests` package that shadows this repo's `tests/`, and MACE is not needed. WyckoffTransformer's matminer holds pandas below 3 (2.3.3, was 3.0.5).
+- **UPET (PET-OAM-XL)** is an ordinary locked dependency. Its Torch-ABI packages resolve from the local wheel index like Torch itself: `metatomic-torch` 0.1.19 and `metatensor-torch` 0.10.8 come from `/mnt/hdd/torch_wheels/`.
+- **orb-models is pinned to a git commit** (`1794f85` on master), because upet 0.3.1 needs `nvalchemi-toolkit-ops>=0.4`, which the latest release (0.7.0) excludes. That commit has the same ORB v3 checkpoint URLs as 0.7.0. It reports version `0.3.2.dev0`, because orb-models stamps versions only at release, so `mlip_relax.py` records the commit instead. Move back to a release once one allows nvalchemi 0.4.
+
+Verified 2026-10-18 at DiffCSPNew `525c232` (dirty): the full test suite passes (84). PET-OAM-XL relaxes the smoke set. ORB `orb_conserv_inf` single points on 111 LeMat-Bulk test structures that sit on the hull reproduce the published `LeMaterial/LeMat-Bulk-MLIP-Hull` energies to a mean of +8.7e-5 and a max of 4.3e-4 eV/atom.
+
+**History.** The first CSP benchmark run (2026-10-16 to 18) predates this setup. PET came from a `--no-deps` PYTHONPATH overlay copied from WyckoffTransformer's notes (upet 0.3.1, metatensor-torch 0.10.6, nvalchemi-toolkit-ops 0.4.0), with orb-models 0.7.0 in the venv. That overlay was never necessary: the lock resolves the metatomic and metatensor wheels from the local index. It also paired orb-models 0.7.0 with an nvalchemi version 0.7.0 excludes. The same ORB check gives identical numbers in that environment (mean +8.8e-5, max 4.3e-4 eV/atom; within 4e-5 eV/atom of the current setup structure by structure), so the run's energies are unaffected.
 
 ---
 

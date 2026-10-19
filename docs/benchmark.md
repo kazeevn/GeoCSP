@@ -35,6 +35,9 @@ Scored with `StructureMatcher(stol=0.5, angle_tol=10, ltol=0.3)`, reported two w
 | `structure_diagnostics.py` | measures shortest interatomic contacts, clash rates ($< 0.9 \times d_{\text{GT}}$), and relative cell-volume error |
 | `layer_divergence.py` | compares full-cell vs asymmetric-unit hidden states and scores layer by layer |
 | `viewpoint_gauge.py` | measures score sensitivity to which orbit member is chosen as the Wyckoff anchor |
+| `mlip_relax.py` | CSP benchmark: PET-OAM-XL relaxation, ORB energies and LeMat-Bulk E_hull of samples or ground truth ([below](#csp-benchmark--wyckoff-gene-track)) |
+| `evaluate_csp.py` | CSP benchmark: Recall@N, energy-ranked recall, three-way breakdown, saddle points, polymorph counts; logs to W&B |
+| `csp_metrics.py` | the metric definitions, and the matching protocol `evaluate.py` also uses |
 
 `run_all.sh` and `run_lemat_eval.sh` drive the baseline MP-20 and LeMat comparisons; `scripts/train_geo_500e.sh`, `scripts/train_geov2_mp20.sh`, `scripts/train_geo_orb.sh`, `scripts/eval_geo_rank3.sh`, and `scripts/eval_geov2_rank3.sh` run the Geo-family benchmarks.
 
@@ -160,7 +163,168 @@ within this table. For the subsequent 100-epoch and property-conditioned `DiffCS
 
 ---
 
-## Caveats that apply to both results
+## CSP benchmark — Wyckoff-gene track
+
+Implements the "Reconstructing Wyckoff genes" evaluations of
+[`ideas/csp_benchmarking.md`](ideas/csp_benchmarking.md). The formula-only CSP track is not
+implemented: every model here is conditioned on a Wyckoff gene. Driven by
+`scripts/run_csp_bench.sh`.
+
+```
+gene -> from_random x20 -> regime -> PET-OAM-XL relax -> ORB energy -> E_hull (LeMat-Bulk ORB hull)
+                                     (WyckoffTransformer   (orb_conserv_inf)
+                                      stepwise + rattle)
+```
+
+**Relaxation.** WyckoffTransformer's `cryspr.relaxer.stepwise_relax_stages` with PET-OAM-XL:
+fix-cell warm-up, cell + positions under `FixSymmetry`, then symmetry released, then a rattle
+(0.05 Å, 1% strain, kept if it wins 1 meV/atom); BFGS with `FrechetCellFilter`, `fmax` 0.05 eV/Å, 500 steps per
+stage, 1200 s per structure. Two readouts:
+
+- **sym**: the end of the symmetry-constrained stages. It is still on the gene's Wyckoff
+  orbits, so it is the **primary readout** of the gene track.
+- **free**: what the free relaxation and the rattle kept. Reported alongside.
+
+**Energies.** ORB `orb-v3-conservative-inf-omat` single points, and E_hull against
+LeMat-Bulk's published hull for the same model (`LeMaterial/LeMat-Bulk-MLIP-Hull`, split
+`orb_conserv_inf`, revision `70d505bb`, 194,240 entries). Energies and hull are therefore
+self-consistent and comparable with LeMat-Bulk-MLIP / LeMat-GenBench. The relaxing
+potential (PET) and the scoring potential (ORB) are deliberately different. The ground
+truth gets two reference energies: ORB on the DFT structure (`gt_dft`, LeMat-GenBench
+style) and ORB on its own PET relaxation (`gt_relaxed`).
+
+**Metrics** (`evaluate_csp.py`; samples are taken in trial order, N ∈ {1, 5, 20}):
+
+| metric | definition |
+|---|---|
+| classic Recall@N | a gene counts if one of its first N raw samples matches the ground truth under `StructureMatcher(stol=0.5, angle_tol=10, ltol=0.3)` |
+| MLIP Recall@N | the same, on the relaxed readouts |
+| ranked Recall@N | the N lowest-ORB-energy relaxed samples out of all 20 |
+| RMSD before/after | mean match RMS of the raw sample and of its relaxation, over samples where both match |
+| three-way breakdown | per gene, over the first N samples (sym readout): **matched**; else **lower** if the lowest sample energy is below the ground truth's by more than a margin (0 or 10 meV/atom), a putative lower-energy polymorph; else **failure** |
+| saddle | the free readout is lower than the sym readout, in PET energy, by more than 1 meV/atom: the fixed-symmetry minimum is a saddle point. Reported for samples and for ground truths |
+| polymorph count | per gene, unique sym readouts with E_hull ≤ 0.1 eV/atom that are not saddles. Ground-truth matches count as ordinary polymorphs; `count_novel` excludes them. Flat budgets N and DoF-dependent budgets (WyckoffTransformer trial schedules `0:1,2:2,*:3` and `0:1,2:3,5:5,8:8,*:10`) |
+
+Uniqueness uses pymatgen's default `StructureMatcher` tolerances (ltol 0.2, stol 0.3,
+angle_tol 5), not the DiffCSP ones. At stol 0.5 the DiffCSP protocol matches zincblende to
+rocksalt NaCl (rms 0.43), so counting with it would merge distinct polymorphs.
+Clustering is greedy in ascending energy. StructureMatcher is not transitive, so that
+order is part of the definition.
+
+**Setup.** `DIFFCSP_EXTRAS="orb wandb dev csp-bench" scripts/platforms/zeus/env_init.sh`. The
+`csp-bench` extra installs WyckoffTransformer editable from `../WyckoffTransformer` and UPET.
+`mlip_relax.py` records both repositories' commits and the versions (or git commits) of the
+packages behind the energies. See [the Zeus environment](platforms/zeus/environment.md).
+
+**Caveats, beyond those below.**
+- The relaxing potential has seen MP. The "OAM" in PET-OAM-XL is OMat24 + sAlex + MPtrj,
+  and MPtrj is MP's own relaxation trajectories, so MP-20 ground truths are close to its
+  training data. ORB-v3-omat is trained on OMat24 alone, which is built from Alexandria
+  structures; Alexandria overlaps MP heavily.
+- E_hull ≤ 0.1 is an ORB statement, and the ORB-vs-DFT error is largest on exactly the
+  novel structures polymorph counting rewards.
+- "lower" means lower than the ground truth in ORB, after PET relaxation. Against
+  `gt_dft` it is biased towards "lower", because the samples sit at a PET minimum and the
+  ground truth at a DFT minimum. `gt_relaxed` removes that bias and is the stricter reference.
+
+## Result 3 — CSP benchmark on MP-20, Wyckoff-gene track
+
+The same 1000 MP-20 genes as Result 1, × 20 `from_random` draws = 19,997 samples per regime
+(`runs/bench/mp20/inits_t20.pkl`, generated 2026-10-16; 3 draws failed). Protocol as
+[above](#csp-benchmark--wyckoff-gene-track).
+
+| regime | samples | relaxed | scored | DiffCSPNew | WyckoffTransformer | W&B run (`symmetry-advantage/diffcsp`) |
+|---|---|---|---|---|---|---|
+| `pyxtal-only (control)` | `run_none.py` | 2026-10-16/17 | 2026-10-18 | `525c232` + uncommitted CSP-benchmark code | `a3e8512` | [`zw2t1pj8`](https://wandb.ai/symmetry-advantage/diffcsp/runs/zw2t1pj8) |
+| `diffcsp-geo (500e)` | `runs/mp20_geo/geo_mp20_500e_best.pt` ([`7jdhrv2f`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f), ep 320) | 2026-10-17 | 2026-10-18 | same | same | [`1t20dz31`](https://wandb.ai/symmetry-advantage/diffcsp/runs/1t20dz31) |
+
+The ground truths were relaxed once (2026-10-16) and serve both regimes. Environment: the
+PYTHONPATH overlay described in the Zeus environment's *History* paragraph. Its ORB energies
+match the current locked setup to within 4e-5 eV/atom. Four relaxation processes shared one
+RTX 6000 Ada; median time per structure was 10.0 s for the control and 3.5 s for Geo.
+
+### Recall@N (%)
+
+| | control R@1 | R@5 | R@20 | Geo R@1 | R@5 | R@20 |
+|---|---|---|---|---|---|---|
+| classic (raw samples) | 22.9 | 52.1 | 71.9 | 83.3 | 89.5 | 93.4 |
+| relaxed, sym readout | 54.7 | 79.7 | 89.2 | 84.0 | 90.8 | 94.0 |
+| relaxed, sym, ranked by ORB energy | **79.8** | 85.4 | 89.2 | **88.2** | 90.6 | 94.0 |
+| relaxed, free readout | 54.3 | 79.8 | 89.6 | 84.0 | 90.7 | 94.0 |
+| relaxed, free, ranked | 76.4 | 84.0 | 89.6 | 88.0 | 90.2 | 94.0 |
+
+Mean match RMS, over samples that match both before and after relaxation (sym readout):
+control 0.158 → 0.029 (4,179 pairs); Geo 0.033 → 0.022 (16,349 pairs).
+
+- **Relaxation does the control's job, not Geo's.** PET relaxation lifts the unrefined
+  draws from 22.9% to 54.7% R@1 but moves Geo by only 0.7 points: Geo's samples are already
+  in the right basin, and relaxation only polishes them (RMS 0.033 → 0.022).
+- **Ranking by energy is worth more than relaxing, for Geo.** Picking the lowest-energy of 20
+  relaxed samples gives 88.2% R@1, against 84.0% for the first sample. For relaxed random
+  draws ranking is the main effect (54.7% → 79.8%).
+- **Geo's margin shrinks but survives**: 88.2 vs 79.8 at ranked R@1, 94.0 vs 89.2 at R@20,
+  with 20× the relaxation budget given to both.
+
+### Three-way breakdown (% of genes; sym readout; matched / lower / failure)
+
+| reference, margin | control N=1 | N=20 | Geo N=1 | N=20 |
+|---|---|---|---|---|
+| `gt_relaxed`, 0 | 54.7 / 1.3 / 44.0 | 89.2 / 2.1 / 8.7 | 84.0 / 3.7 / 12.3 | 94.0 / 3.5 / 2.5 |
+| `gt_relaxed`, 10 meV/atom | 54.7 / 0.7 / 44.6 | 89.2 / 1.1 / 9.7 | 84.0 / 1.4 / 14.6 | 94.0 / 2.2 / 3.8 |
+| `gt_dft`, 10 meV/atom | 54.7 / 1.0 / 44.3 | 89.2 / 1.2 / 9.6 | 84.0 / 1.7 / 14.3 | 94.0 / 2.5 / 3.5 |
+
+With 20 samples, Geo finds a structure at least 10 meV/atom below the ground truth (in ORB,
+after PET relaxation) for 2.2% of genes. These are candidates for inspection, not
+discoveries: see the caveats above.
+
+### Stability and saddle points
+
+| | ground truth | control samples | Geo samples |
+|---|---|---|---|
+| sym readout E_hull ≤ 0.1 eV/atom | 95.3% | 52.8% | 88.4% |
+| sym readout E_hull, median (eV/atom) | 0.010 | 0.082 | 0.015 |
+| raw sample E_hull ≤ 0.1 eV/atom | 95.2% (DFT structure) | 2.3% | 69.4% |
+| saddle (free relaxation drops > 1 meV/atom) | 6.0% | 30.3% | 9.1% |
+| saddle, among metastable sym readouts | 5.8% | 9.0% | 7.1% |
+
+**6% of MP-20 ground truths are saddle points under PET-OAM-XL**, which answers the open
+question in the ideas doc for this potential. When a metastable sym readout is a saddle, the
+cause may be the potential rather than the structure; ground truths show the rate is
+non-negligible even for DFT-relaxed structures. The PET-relaxed ground truth still matches
+the DFT structure in 99.3% of genes.
+
+### Polymorph counts per gene (unique, E_hull ≤ 0.1, non-saddle)
+
+| budget | control: count / ≥1 / novel / ≥1 novel | Geo: count / ≥1 / novel / ≥1 novel |
+|---|---|---|
+| N = 1 | 0.49 / 48.7% / 0.04 / 4.3% | 0.83 / 82.9% / 0.09 / 8.8% |
+| N = 20 | 1.59 / 86.1% / 0.71 / 25.4% | 1.96 / 92.8% / 0.95 / 18.7% |
+| DoF `0:1,2:2,*:3` (2.43 samples/gene) | 0.71 / 64.8% / 0.13 / 10.1% | 1.04 / 89.0% / 0.22 / 13.9% |
+| DoF `0:1,2:3,5:5,8:8,*:10` (5.65) | 1.11 / 77.7% / 0.39 / 19.4% | 1.48 / 91.7% / 0.56 / 17.6% |
+
+"novel" means a cluster whose representative does not match the ground truth, even under the
+loose DiffCSP tolerances. It is **not** novelty against MP or any other database, which this
+benchmark does not check. At N = 20, Geo yields more distinct non-ground-truth polymorphs
+per gene (0.95 vs 0.71), but random draws reach at least one in more genes (25.4% vs 18.7%):
+Geo concentrates on fewer genes.
+
+### Notes on this run
+
+- **Failures.** All 9 failed relaxations (control only, 0.045%) are raw draws whose atoms
+  overlap: e.g. 1.65 Å³/atom with a = 1.97 Å. PET's neighbour list (metatomic-ase via
+  nvalchemiops) stops at 1000 neighbours per atom and raises `NeighborOverflowError`. The
+  same happens in the current environment. They count as misses.
+- **Relaxations are not bit-reproducible on GPU.** Six smoke-run structures, re-relaxed in
+  this run with identical inputs and seeds, differ by 0.1–0.6 meV/atom in PET energy, and one
+  landed in a different basin (E_hull 0.017 vs 0.084). Where the rattle ends up can differ by
+  hundreds of meV/atom. Aggregate metrics are unaffected in expectation; single-sample
+  outcomes are not reproducible.
+- **The sym readout does not always keep the gene's space group by spglib's reckoning**
+  (symprec 0.1): 10.9% of control and 4.2% of Geo sym readouts report a different
+  space-group number. FixSymmetry should preserve the gene's symmetry, so these may be
+  detections of a higher symmetry, but they have not been analysed.
+
+## Caveats that apply to all results
 
 - **The sets are the round-trippable subsets.** Reaching 1000 representations screened
   2560 candidates on MP-20 and 2304 on LeMat: only ~40% survive
