@@ -38,6 +38,7 @@ Scored with `StructureMatcher(stol=0.5, angle_tol=10, ltol=0.3)`, reported two w
 | `mlip_relax.py` | CSP benchmark: PET-OAM-XL relaxation, ORB energies and LeMat-Bulk E_hull of samples or ground truth ([below](#csp-benchmark--wyckoff-gene-track)) |
 | `evaluate_csp.py` | CSP benchmark: Recall@N, energy-ranked recall, three-way breakdown, saddle points, polymorph counts; logs to W&B |
 | `csp_metrics.py` | the metric definitions, and the matching protocol `evaluate.py` also uses |
+| `gen_csp_formula.py` | CSP formula track: a composition-conditioned WyFormer samples the genes ([below](#csp-benchmark--formula-track)); `gen_init.py --genes` draws them |
 
 `run_all.sh` and `run_lemat_eval.sh` drive the baseline MP-20 and LeMat comparisons; `scripts/train_geo_500e.sh`, `scripts/train_geov2_mp20.sh`, `scripts/train_geo_orb.sh`, `scripts/eval_geo_rank3.sh`, and `scripts/eval_geov2_rank3.sh` run the Geo-family benchmarks.
 
@@ -166,8 +167,8 @@ within this table. For the subsequent 100-epoch and property-conditioned `DiffCS
 ## CSP benchmark — Wyckoff-gene track
 
 Implements the "Reconstructing Wyckoff genes" evaluations of
-[`ideas/csp_benchmarking.md`](ideas/csp_benchmarking.md). The formula-only CSP track is not
-implemented: every model here is conditioned on a Wyckoff gene. Driven by
+[`ideas/csp_benchmarking.md`](ideas/csp_benchmarking.md). Every model here is conditioned on a
+Wyckoff gene; the formula-only track is [below](#csp-benchmark--formula-track). Driven by
 `scripts/run_csp_bench.sh`.
 
 ```
@@ -323,6 +324,50 @@ Geo concentrates on fewer genes.
   (symprec 0.1): 10.9% of control and 4.2% of Geo sym readouts report a different
   space-group number. FixSymmetry should preserve the gene's symmetry, so these may be
   detections of a higher symmetry, but they have not been analysed.
+
+## CSP benchmark — formula track
+
+The formula-only CSP of [`ideas/csp_benchmarking.md`](ideas/csp_benchmarking.md): the
+model is given the composition of each benchmark entry, not its gene. Driven by
+`scripts/run_csp_formula_bench.sh`.
+
+```
+formula -> WyFormer: sg ~ p(sg | composition), gene ~ constrained decoder -> from_random -> DiffCSP-Geo -> PET relax -> ORB
+           (x20 i.i.d. samples per formula)
+```
+
+**Tasks.** The 1000 entries of Result 1/3 (983 distinct formulas), each scored against its
+own ground truth, so the gene track (Result 3) is this track with an oracle gene. In 93.4%
+of entries the ground truth is the lowest-`e_above_hull` MP-20 test polymorph of its
+formula; 28.8% of the formulas also occur in MP-20 train+val (as other polymorphs).
+
+**Gene sampling** (`bench/gen_csp_formula.py`). Each sample is an independent draw: the
+space group from the backbone's start head, renormalised over the groups that can express
+the composition, then the gene from WyckoffTransformer's composition-constrained decoder
+(`wyckoff_transformer.csp.ConstrainedDecoder`, `strategy="sample"`, temperature 1, no
+calibration) in that group. Duplicates are kept, and the trial order is the sampling
+order. Two cell-size settings:
+
+- **z free**: the model chooses the number of formula units, up to 80 atoms in the
+  conventional cell (the largest in MP-20 train+val);
+- **cell given** (`--given_cell`): the decoder may only finish at the ground truth's atom
+  count. This is what the DiffCSP CSP protocol gives a model.
+
+A backbone conditioned on formation energy is given the formation energy of the hull at the
+formula's composition, built from MP-20 train+val only (elements at zero): "on the hull",
+without looking at the test structure.
+
+**Metrics.** Those of the gene track, plus, from each sample's gene: Recall@N of the ground
+truth's space group and of its exact gene (same space group, same species on the same
+Wyckoff labels; a lower bound, since a structure has several equivalent labellings), and
+Recall@N with the 20 samples ranked by the model's joint log-probability
+log p(sg) + log p(gene | sg) ("likelihood"). Per-gene DoF budgets do not apply and are
+skipped; the space-group checks compare against the sample's own gene. The ground truth's
+PET relaxation is the gene track's.
+
+**Note.** `wyformer-csp`'s `build_condition_vector` (WyckoffTransformer `41f741b`) does not
+append the null-indicator column that a classifier-free-guidance backbone expects, so it
+refuses those models. `gen_csp_formula.py` builds the vector itself for them.
 
 ## Caveats that apply to all results
 
