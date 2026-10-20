@@ -5,6 +5,7 @@ thin driver and the definitions can be unit-tested without an MLIP. Every
 energy here is in eV/atom; the samples of one gene share its composition, so
 per-atom energies of a gene's samples and of its ground truth are comparable.
 """
+import functools
 from collections.abc import Callable, Sequence
 
 import numpy as np
@@ -144,3 +145,34 @@ def dof_budget(dof: int, schedule: str) -> int:
     from wyckoff_transformer.evaluation.protocol import parse_trial_schedule, trials_for_dof
 
     return trials_for_dof(dof, parse_trial_schedule(schedule))
+
+
+@functools.cache
+def letter_permutations(group: int) -> tuple[dict[str, str], ...]:
+    """The Wyckoff-letter relabellings of space group *group* that describe the same structure.
+
+    PyXtal's ``Group.get_alternatives()``: each row of ``Transformed WP`` lists the images of
+    the letters a, b, c, ... under one coset of the space group's normalizer. They form a group
+    for all 230 space groups (WyckoffTransformer, docs/wyckoff_augmentation_audit.md), so the
+    minimum over them is a canonical form. Rows that permute nothing are collapsed.
+    """
+    from pyxtal.symmetry import Group
+
+    rows = [tuple(r.split()) for r in Group(group).get_alternatives()["Transformed WP"]]
+    return tuple(dict(zip(rows[0], row)) for row in dict.fromkeys(rows))
+
+
+def canonical_gene(rep: dict, equivalent: bool = True) -> tuple:
+    """A pyXtal representation as (space group, sorted (species, Wyckoff label) pairs).
+
+    With *equivalent*, two genes are equal when a normalizer relabelling maps one onto the
+    other, e.g. Ba 1a, Ti 1b, O 3c and Ba 1b, Ti 1a, O 3d in Pm-3m. Without it, labels are
+    compared as written, which counts such pairs as different genes. Either way, a structure
+    described in two different space groups (a subgroup setting, say) has two genes.
+    """
+    sites = [(str(sp), lab) for sp, labs in zip(rep["species"], rep["sites"]) for lab in labs]
+    if not equivalent:
+        return rep["group"], tuple(sorted(sites))
+    # A label is the multiplicity followed by one letter; relabelling keeps the multiplicity.
+    return rep["group"], min(tuple(sorted((sp, lab[:-1] + p[lab[-1]]) for sp, lab in sites))
+                             for p in letter_permutations(rep["group"]))

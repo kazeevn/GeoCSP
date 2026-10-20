@@ -109,26 +109,28 @@ def _stats(x):
             "frac_le_0.1": float(np.mean(x <= cm.METASTABLE_E_HULL)), "frac_le_0": float(np.mean(x <= 0))}
 
 
-def canonical_gene(rep):
-    """A gene as (space group, sorted (species, Wyckoff label) pairs).
-
-    Equal genes are equal; unequal ones may still describe the same structure, since a
-    representation is only unique up to the space group's normalizer (origin choice).
-    """
-    return rep["group"], tuple(sorted((str(sp), lab) for sp, labs in zip(rep["species"], rep["sites"]) for lab in labs))
-
-
 def gene_metrics(entries, per_entry, slots, gene_of, ns):
-    """Formula track: does the model's sampling recover the ground truth's space group and gene?"""
-    gt_genes = [canonical_gene(e["rep"]) for e in entries]
+    """Formula track: does the model's sampling recover the ground truth's space group and gene?
+
+    Genes are compared up to equivalent relabellings (`csp_metrics.canonical_gene`).
+    """
     genes = [[gene_of.get((r["entry"], r["trial"])) if r else None for r in s] for s in slots]
-    same_sg = [[g is not None and g["sg"] == gt[0] for g in gs] for gs, gt in zip(genes, gt_genes)]
-    same_gene = [[g is not None and canonical_gene(g["rep"]) == gt for g in gs] for gs, gt in zip(genes, gt_genes)]
+
+    def same(equivalent):
+        gts = [cm.canonical_gene(e["rep"], equivalent) for e in entries]
+        return [[g is not None and cm.canonical_gene(g["rep"], equivalent) == gt for g in gs]
+                for gs, gt in zip(genes, gts)]
+
+    same_sg = [[g is not None and g["sg"] == e["rep"]["group"] for g in gs] for gs, e in zip(genes, entries)]
     flat = [g for gs in genes for g in gs if g is not None]
     return {
         "space_group_recall": cm.recall_at_n(same_sg, ns),
-        "gene_recall": cm.recall_at_n(same_gene, ns),
-        "distinct_genes_per_formula": float(np.mean([len({canonical_gene(g["rep"]) for g in gs if g}) for gs in genes])),
+        # Equal up to the space group's normalizer relabellings; the exact-label figure, which
+        # misses equivalent labellings, is kept for comparison with runs scored before 2026-10-21.
+        "gene_recall": cm.recall_at_n(same(True), ns),
+        "gene_recall_exact_labels": cm.recall_at_n(same(False), ns),
+        "distinct_genes_per_formula": float(np.mean([len({cm.canonical_gene(g["rep"]) for g in gs if g})
+                                                     for gs in genes])),
         "distinct_space_groups_per_formula": float(np.mean([len({g["sg"] for g in gs if g}) for gs in genes])),
         "atoms_median": float(np.median([g["n_atoms"] for g in flat])),
         "frac_atoms_gt_gt": float(np.mean([g["n_atoms"] > e["gt"].num_sites for gs, e in zip(genes, entries)
@@ -342,7 +344,8 @@ def print_summary(label, res):
         for ro in READOUTS if "mlip" in res else ():
             rows.append((f"relaxed {ro}, likelihood", res["mlip"][ro]["likelihood_ranked_recall"], float("nan")))
         rows += [("GT space group", res["genes"]["space_group_recall"], float("nan")),
-                 ("GT gene (exact)", res["genes"]["gene_recall"], float("nan"))]
+                 ("GT gene", res["genes"]["gene_recall"], float("nan")),
+                 ("GT gene, exact labels", res["genes"]["gene_recall_exact_labels"], float("nan"))]
     for name, rec, rms in rows:
         print(f"{name:<22}" + "  ".join(f"{100 * rec[n]:>6.1f}%" for n in ns) + f"   {rms:.4f}")
     if "genes" in res:

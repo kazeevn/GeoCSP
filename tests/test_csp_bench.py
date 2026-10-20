@@ -100,6 +100,27 @@ def test_dof_budget_default_schedule():
     assert [cm.dof_budget(d, "0:1,2:2,*:3") for d in (0, 1, 2, 3, 12)] == [1, 2, 2, 3, 3]
 
 
+def test_canonical_gene_identifies_normalizer_relabellings():
+    perovskite = {"group": 221, "species": ["Ba", "Ti", "O"], "sites": [["1a"], ["1b"], ["3c"]]}
+    # Pm-3m's normalizer swaps a<->b and c<->d: the same cubic perovskite.
+    shifted = {"group": 221, "species": ["O", "Ba", "Ti"], "sites": [["3d"], ["1b"], ["1a"]]}
+    # O moved to 3d with Ba and Ti kept: O at the edge centres of Ba's cell, not the face centres.
+    swapped_o = {"group": 221, "species": ["Ba", "Ti", "O"], "sites": [["1a"], ["1b"], ["3d"]]}
+    assert cm.canonical_gene(perovskite) == cm.canonical_gene(shifted)
+    assert cm.canonical_gene(perovskite, equivalent=False) != cm.canonical_gene(shifted, equivalent=False)
+    # 1a/1b/3d is the image of 1b/1a/3c, which is not 1a/1b/3c: a different structure.
+    assert cm.canonical_gene(perovskite) != cm.canonical_gene(swapped_o)
+
+
+def test_letter_permutations_keep_multiplicities():
+    from pyxtal.symmetry import Group
+
+    for n in range(1, 231):
+        mult = {w.letter: w.multiplicity for w in Group(n).Wyckoff_positions}
+        for p in cm.letter_permutations(n):
+            assert all(mult[a] == mult[b] for a, b in p.items()), n
+
+
 def test_match_rms_is_the_evaluate_py_protocol():
     gt = rocksalt()
     assert cm.match_rms(gt, rocksalt(a=5.7)) == pytest.approx(0.0, abs=1e-6)
