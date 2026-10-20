@@ -40,7 +40,7 @@ DIFFCSP_EXTRAS="dev" scripts/platforms/zeus/env_init.sh
 
 ### CSP benchmark: WyckoffTransformer and PET-OAM-XL
 
-The CSP benchmark (`bench/mlip_relax.py`, [benchmark.md](../../benchmark.md#csp-benchmark--wyckoff-gene-track)) needs the `csp-bench` extra:
+The CSP benchmark (`bench/mlip_relax.py`, [benchmark.md](../../benchmark.md#csp-benchmark--reconstructing-wyckoff-genes)) needs the `csp-bench` extra:
 
 ```bash
 DIFFCSP_EXTRAS="orb wandb dev csp-bench" scripts/platforms/zeus/env_init.sh
