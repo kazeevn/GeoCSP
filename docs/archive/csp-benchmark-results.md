@@ -6,9 +6,9 @@
 > terms. The protocols as implemented are current and live in [`../benchmark.md`](../benchmark.md)
 > ([CSP, formula given](../benchmark.md#csp-benchmark--csp-formula-given),
 > [Reconstructing Wyckoff genes](../benchmark.md#csp-benchmark--reconstructing-wyckoff-genes)).
-> Later runs, and code changes after `4b609b5`, may supersede what is written here. In
-> particular, CSP from the formula was still running when this was written: only one of its
-> six regimes was complete.
+> Later runs, and code changes after `4b609b5`, may supersede what is written here. CSP from the
+> formula is complete for the three backbones with the atom count given; the three regimes in
+> which the model chooses z were cancelled on 2026-10-21 (see below).
 
 Both evaluations use the 1000 MP-20 benchmark entries of
 [Result 1](mp20-lemat-match-rate-results.md) (983 distinct formulas), the PET-OAM-XL relaxation,
@@ -56,10 +56,9 @@ Regimes are `<model>-cell` (the ground truth's atom count given, the DiffCSP pro
 | regime | genes | draws, Geo, relaxation | scoring | DiffCSPNew | WyckoffTransformer | W&B run (`symmetry-advantage/diffcsp`) | status |
 |---|---|---|---|---|---|---|---|
 | `uncond-cell` | 2026-10-19/20 | 2026-10-20 | 2026-10-21 | `43da227` (genes), `60ba231` (the 94 repaired formulas, draws, Geo, relaxation), `4b609b5` (scoring) | `41f741b` | [`5mh3v9wl`](https://wandb.ai/symmetry-advantage/diffcsp/runs/5mh3v9wl); first scored 2026-10-20 at `60ba231` as [`ptmvqmv2`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ptmvqmv2), with exact-label gene matching | complete |
-| `eform-cell` | 2026-10-19/20 | 2026-10-20/21 | — | same | same | — | relaxing |
-| `eform-cfg-cell` | 2026-10-19/20 | — | — | same | same | — | queued |
-| `uncond`, `eform-cfg` | 2026-10-19/20 | — | — | `1deb6fb-dirty` (≈`43da227`), repaired at `60ba231` | same | — | queued, Classic Match Rate only (no relaxation) |
-| `eform` | 2026-10-19/20 | — | — | same | same | — | queued |
+| `eform-cell` | 2026-10-19/20 | 2026-10-20 | 2026-10-21 | `43da227` (genes), `60ba231` (repair, draws, Geo, relaxation), `028ea24` (scoring; evaluation code as in `4b609b5`) | `41f741b` | [`zu75p9yz`](https://wandb.ai/symmetry-advantage/diffcsp/runs/zu75p9yz) | complete |
+| `eform-cfg-cell` | 2026-10-19/20 | 2026-10-21 | 2026-10-21 | `43da227` (genes), `60ba231` (repair), `028ea24` (draws, Geo, relaxation, scoring) | `41f741b`; `db7cefe` for the relaxation | [`xrc3zzwv`](https://wandb.ai/symmetry-advantage/diffcsp/runs/xrc3zzwv) | complete |
+| `uncond`, `eform-cfg`, `eform` (z chosen by the model) | 2026-10-19/20 | — | — | `1deb6fb-dirty` (≈`43da227`), repaired at `60ba231` | same | — | cancelled 2026-10-21; gene files kept |
 
 Files are in `runs/bench/mp20/formula/`; `orchestrate_20261020.sh` is the driver invocation, and
 `csp_geo_uncond-cell_t20.rescore-geneq.pkl` the 2026-10-21 scoring. Each gene file's metadata
@@ -70,9 +69,16 @@ formulas. Seeds are per entry, so the files equal a full rerun at `60ba231`. Not
 record `60ba231` though they ran the code of `43da227`. The two differ only in the formula string
 and in `--repair`.
 
-`uncond-cell`: 1000 formulas, 19,923 samples (77 `from_random` draws failed and count as misses).
-Per formula, the 20 samples hold 9.3 distinct genes (up to equivalent relabellings) in 3.3 space
-groups, median 12 atoms.
+The z-free regimes were cancelled once the analyses below showed the bottleneck is WyFormer's
+sampler and space-group head, which they share: a two-day relaxation of genes from the same sampler
+would not have answered a new question. Their gene files stay in `runs/bench/mp20/formula/`.
+WyckoffTransformer `main` moved from `41f741b` to `db7cefe` (documentation and a merged
+Hugging Face inference branch) while `eform-cfg-cell` waited to be relaxed; its relaxation records
+the later commit.
+
+Samples per regime (1000 formulas × 20, failed `from_random` draws count as misses): `uncond-cell`
+19,923, `eform-cell` 19,938, `eform-cfg-cell` 19,913. Per formula, the 20 samples hold 9.3, 9.4 and
+9.7 distinct genes (up to equivalent relabellings) in 3.3–3.4 space groups, median 12 atoms.
 
 ### Classic Match Rate
 
@@ -80,12 +86,12 @@ groups, median 12 atoms.
 Ranking by WyFormer's likelihood is not in the ideas doc; it orders the 20 samples by
 log p(sg) + log p(gene | sg).
 
-| `uncond-cell`, Recall@N (%) | R@1 | R@5 | R@20 | oracle gene (R@1 / R@20) |
+| Recall@1 / 5 / 20 (%) | `uncond-cell` | `eform-cell` | `eform-cfg-cell` | oracle gene (R@1 / R@20) |
 |---|---|---|---|---|
-| raw samples, sampling order | 24.7 | 49.5 | 66.4 | 83.3 / 93.4 |
-| raw samples, ranked by WyFormer likelihood | 34.7 | 48.1 | 66.4 | |
+| raw samples, sampling order | 24.7 / 49.5 / 66.4 | **29.0 / 53.9 / 69.7** | 23.2 / 50.5 / 66.6 | 83.3 / 93.4 |
+| raw samples, ranked by WyFormer likelihood | 34.7 / 48.1 / 66.4 | **40.0** / 53.9 / 69.7 | 35.3 / 48.9 / 66.6 | |
 
-Mean match RMS of the raw samples that match: 0.115.
+Mean match RMS of the raw samples that match: 0.115, 0.111, 0.114.
 
 ### MLIP-assisted Match Rate
 
@@ -93,17 +99,22 @@ Mean match RMS of the raw samples that match: 0.115.
 relaxed readouts, unranked and ranked by ORB energy; RMSD before and after relaxation; the
 three-way breakdown.
 
-| `uncond-cell`, Recall@N (%) | R@1 | R@5 | R@20 | oracle gene (R@1 / R@20) |
+| Recall@1 / 5 / 20 (%) | `uncond-cell` | `eform-cell` | `eform-cfg-cell` | oracle gene (R@1 / R@20) |
 |---|---|---|---|---|
-| sym readout | 25.7 | 50.5 | 66.5 | 84.0 / 94.0 |
-| sym readout, ranked by ORB energy | **52.8** | 60.7 | 66.5 | **88.2** / 94.0 |
-| sym readout, ranked by WyFormer likelihood | 36.2 | 49.1 | 66.5 | |
-| free readout | 29.8 | 55.0 | 73.3 | 84.0 / 94.0 |
-| free readout, ranked by ORB energy | 53.0 | 65.0 | **73.3** | 88.0 / 94.0 |
-| free readout, ranked by WyFormer likelihood | 37.8 | 53.1 | 73.3 | |
+| sym readout | 25.7 / 50.5 / 66.5 | 29.7 / 54.6 / 68.8 | 23.2 / 51.2 / 67.4 | 84.0 / 94.0 |
+| sym readout, ranked by ORB energy | 52.8 / 60.7 / 66.5 | **54.8 / 62.2 / 68.8** | 51.6 / 58.6 / 67.4 | **88.2** / 94.0 |
+| sym readout, ranked by WyFormer likelihood | 36.2 / 49.1 / 66.5 | 39.8 / 53.1 / 68.8 | 35.3 / 48.4 / 67.4 | |
+| free readout | 29.8 / 55.0 / 73.3 | 32.3 / 59.7 / 74.6 | 25.6 / 55.5 / 73.3 | 84.0 / 94.0 |
+| free readout, ranked by ORB energy | 53.0 / 65.0 / 73.3 | 54.0 / 65.4 / **74.6** | 52.4 / 62.8 / 73.3 | 88.0 / 94.0 |
+| free readout, ranked by WyFormer likelihood | 37.8 / 53.1 / 73.3 | 42.1 / 57.9 / 74.6 | 37.7 / 52.1 / 73.3 | |
 
 RMSD before and after MLIP relaxation, over samples that match both before and after: sym
-readout 0.097 → 0.090 (4,821 pairs), free readout 0.091 → 0.061 (4,738).
+readout 0.097 → 0.090, 0.093 → 0.085, 0.093 → 0.087 (4,821, 5,612, 4,608 pairs); free readout
+0.091 → 0.061, 0.086 → 0.056, 0.085 → 0.061 (`uncond-cell`, `eform-cell`, `eform-cfg-cell`).
+
+- **Conditioning on the training-hull formation energy helps a little.** `eform-cell` leads
+  `uncond-cell` by 2–5 points on every row. The guidance-trained `eform-cfg-cell`, sampled at
+  guidance scale 1 (plain conditional), is no better than `uncond-cell`; higher scales were not tried.
 
 - **Finding the gene is the bottleneck, not reconstructing it.** With the gene given, Geo reaches
   88.2% energy-ranked R@1; from the formula, 52.8%. At R@20, structure recall (66.5%) tracks
@@ -113,31 +124,32 @@ readout 0.097 → 0.090 (4,821 pairs), free readout 0.091 → 0.061 (4,738).
   likelihood gives about a third of that gain (→ 36.2).
 - **The free readout finds structures outside the sampled gene.** At R@20 it recovers 73.3% against
   the sym readout's 66.5%: 55% of free readouts leave the gene's space group, and some of them
-  relax into the ground truth.
+  relax into the ground truth. The same holds for the other two backbones: 53–57% of free readouts
+  leave the gene's space group.
 
-Three-way breakdown, `uncond-cell`, % of formulas, sym readout:
+Three-way breakdown, % of formulas, sym readout, N = 1 | 5 | 20:
 
-| reference, margin | N=1 | N=5 | N=20 |
+| reference, margin | `uncond-cell` | `eform-cell` | `eform-cfg-cell` |
 |---|---|---|---|
-| `gt_relaxed`, 0 | 25.7 / 3.9 / 70.4 | 50.5 / 7.3 / 42.2 | 66.5 / 9.5 / 24.0 |
-| `gt_relaxed`, 10 meV/atom | 25.7 / 2.6 / 71.7 | 50.5 / 4.3 / 45.2 | 66.5 / 6.0 / 27.5 |
-| `gt_dft`, 10 meV/atom | 25.7 / 2.9 / 71.4 | 50.5 / 4.8 / 44.7 | 66.5 / 6.8 / 26.7 |
+| `gt_relaxed`, 0 | 25.7/3.9/70.4 \| 50.5/7.3/42.2 \| 66.5/9.5/24.0 | 29.7/4.5/65.8 \| 54.6/8.5/36.9 \| 68.8/9.2/22.0 | 23.2/3.8/73.0 \| 51.2/7.5/41.3 \| 67.4/7.8/24.8 |
+| `gt_relaxed`, 10 meV/atom | 25.7/2.6/71.7 \| 50.5/4.3/45.2 \| 66.5/6.0/27.5 | 29.7/2.8/67.5 \| 54.6/4.9/40.5 \| 68.8/5.8/25.4 | 23.2/2.3/74.5 \| 51.2/4.6/44.2 \| 67.4/5.4/27.2 |
+| `gt_dft`, 10 meV/atom | 25.7/2.9/71.4 \| 50.5/4.8/44.7 \| 66.5/6.8/26.7 | 29.7/3.2/67.1 \| 54.6/5.4/40.0 \| 68.8/6.4/24.8 | 23.2/2.6/74.2 \| 51.2/4.8/44.0 \| 67.4/5.7/26.9 |
 
-For 6.0% of formulas, a sample is a putative lower polymorph, at least 10 meV/atom below the
+For 5.4–6.0% of formulas, a sample is a putative lower polymorph, at least 10 meV/atom below the
 PET-relaxed ground truth in ORB, against 2.2% for the oracle gene. These are candidates for
 inspection, and they inherit the caveats of the Wyckoff-gene benchmark. Samples of a wrong gene
 are also more often saddle points (below), and a saddle point's sym energy is not a minimum.
 
-Saddle points and metastability, `uncond-cell`:
+Saddle points and metastability:
 
-| | ground truth | samples | oracle-gene Geo samples |
-|---|---|---|---|
-| sym readout E_hull ≤ 0.1 eV/atom | 95.3% | 34.1% | 88.4% |
-| sym readout E_hull, median (eV/atom) | 0.010 | 0.249 | 0.015 |
-| raw sample E_hull ≤ 0.1 eV/atom | 95.2% | 21.9% | 69.4% |
-| saddle point | 6.0% | 52.6% | 9.1% |
-| saddle point, among metastable sym readouts | 5.8% | 10.7% | 7.1% |
-| sym readout left the gene's space group (spglib, symprec 0.1) | | 17.5% | 4.2% |
+| | ground truth | `uncond-cell` | `eform-cell` | `eform-cfg-cell` | oracle-gene Geo samples |
+|---|---|---|---|---|---|
+| sym readout E_hull ≤ 0.1 eV/atom | 95.3% | 34.1% | 36.7% | 32.7% | 88.4% |
+| sym readout E_hull, median (eV/atom) | 0.010 | 0.249 | 0.219 | 0.259 | 0.015 |
+| raw sample E_hull ≤ 0.1 eV/atom | 95.2% | 21.9% | 24.7% | 21.2% | 69.4% |
+| saddle point | 6.0% | 52.6% | 50.4% | 52.9% | 9.1% |
+| saddle point, among metastable sym readouts | 5.8% | 10.7% | 11.2% | 9.8% | 7.1% |
+| sym readout left the gene's space group (spglib, symprec 0.1) | | 17.5% | 17.2% | 18.8% | 4.2% |
 
 Most samples are saddle points of their gene under PET-OAM-XL, but the metastable ones mostly
 are not.
@@ -148,15 +160,19 @@ are not.
 unique sym readouts with E_hull ≤ 0.1 eV/atom that are not saddle points. The formulas come from
 the test set, and the model does not choose its own budget.
 
-| `uncond-cell`, budget | count / ≥1 / novel / ≥1 novel |
-|---|---|
-| N = 1 | 0.31 / 30.7% / 0.12 / 12.1% |
-| N = 5 | 0.84 / 60.6% / 0.43 / 28.1% |
-| N = 20 | 1.98 / 77.5% / 1.35 / 43.8% |
+Each cell is count / ≥1 / novel / ≥1 novel: the mean number of distinct polymorphs per formula,
+the share of formulas with at least one, and the same two for polymorphs that do not match the
+ground truth.
+
+| budget | `uncond-cell` | `eform-cell` | `eform-cfg-cell` |
+|---|---|---|---|
+| N = 1 | 0.31 / 30.7% / 0.12 / 12.1% | 0.33 / 33.0% / 0.11 / 11.1% | 0.29 / 29.4% / 0.12 / 12.5% |
+| N = 5 | 0.84 / 60.6% / 0.43 / 28.1% | 0.90 / 65.7% / 0.44 / 28.9% | 0.84 / 59.4% / 0.44 / 28.9% |
+| N = 20 | 1.98 / 77.5% / 1.35 / 43.8% | 1.92 / 80.3% / 1.27 / 44.7% | 1.89 / 77.0% / 1.29 / 44.0% |
 
 "novel" means not matching the ground truth, as for Wyckoff genes below. It is not novelty
 against MP. With 20 samples, the formula-given samples hold more non-ground-truth metastable
-polymorphs per formula than the oracle gene's do per gene (1.35 vs 0.95): they spread over
+polymorphs per formula than the oracle gene's do per gene (1.27–1.35 vs 0.95): they spread over
 several genes.
 
 ### Wyckoff gene recovery
@@ -165,14 +181,14 @@ Not in the ideas doc: how often the samples' Wyckoff genes recover the ground tr
 order. Genes are compared up to the space group's normalizer relabellings (`csp_metrics.canonical_gene`,
 since `4b609b5`); the exact-label comparison used at first misses equivalent labellings.
 
-| `uncond-cell`, Recall@N (%) | R@1 | R@5 | R@20 |
+| Recall@1 / 5 / 20 (%) | `uncond-cell` | `eform-cell` | `eform-cfg-cell` |
 |---|---|---|---|
-| ground truth's space group | 42.0 | 58.0 | 68.9 |
-| ground truth's Wyckoff gene | 20.1 | 39.1 | 52.4 |
-| … compared on exact labels | 13.7 | 31.8 | 46.3 |
+| ground truth's space group | 42.0 / 58.0 / 68.9 | 43.3 / 60.5 / 71.1 | 40.6 / 59.1 / 69.3 |
+| ground truth's Wyckoff gene | 20.1 / 39.1 / 52.4 | 23.8 / 43.5 / 56.7 | 18.6 / 38.2 / 52.1 |
+| … compared on exact labels | 13.7 / 31.8 / 46.3 | 14.9 / 34.7 / 49.3 | 11.7 / 29.7 / 45.8 |
 
-Per sample, 20.5% of the genes are the ground truth's (13.6% on exact labels). Of the 5,157 raw
-samples that match the ground-truth structure, 67.7% carry its gene (41.8% on exact labels) and
+For `uncond-cell`: per sample, 20.5% of the genes are the ground truth's (13.6% on exact labels).
+Of the 5,157 raw samples that match the ground-truth structure, 67.7% carry its gene (41.8% on exact labels) and
 84.2% its space group. The remaining 16.5% match from the right space group but a different gene;
 why has not been analysed. StructureMatcher at the DiffCSP tolerances (stol 0.5) is loose enough to
 match distinct structures.

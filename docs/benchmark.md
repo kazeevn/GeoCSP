@@ -184,7 +184,8 @@ Archived, not maintained:
   Result 1 (MP-20 match rates, `match/trial` and `best-of-3`, every DiffCSP regime) and
   Result 2 (LeMat-Bulk, does more data help?), 2026-09-09 … 09-14.
 - [`archive/csp-benchmark-results.md`](archive/csp-benchmark-results.md) — the CSP benchmark,
-  in the sections of the ideas doc: CSP, formula given (partial as of 2026-10-21, W&B `5mh3v9wl`)
+  in the sections of the ideas doc: CSP, formula given (atom count given; three WyFormer backbones,
+  2026-10-19 … 21, W&B `5mh3v9wl`, `zu75p9yz`, `xrc3zzwv`)
   and Reconstructing Wyckoff genes (MP-20, 2026-10-16 … 18, W&B `zw2t1pj8`, `1t20dz31`).
 
 ## Caveats that apply to all results
