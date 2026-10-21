@@ -82,8 +82,6 @@ class GeneSampler:
         self.t, self.device, self.max_atoms, self.temperature = trainer, device, max_atoms, temperature
         if not getattr(trainer, "predict_start", False):
             raise ValueError("the backbone has no start head (predict_start) to sample the space group from")
-        if trainer.condition_on_cell_size:
-            raise ValueError("a backbone conditioned on the cell size cannot choose z in one pass")
         # Class i of the start head is the i-th space group in ascending order.
         self.space_groups = sorted(trainer.tokenisers[trainer.start_name])
         self.decoder = ConstrainedDecoder(
@@ -112,13 +110,18 @@ class GeneSampler:
         """*n* genes for *formula*, in sampling order; None where decoding failed.
 
         *n_atoms* fixes the cell content, as the DiffCSP CSP protocol gives it; by
-        default the model chooses z.
+        default the model chooses z. A backbone conditioned on the cell size needs it, since
+        its conditioning vector carries the atom count.
         """
         from wyckoff_transformer.cli.csp import build_condition_vector, start_tensor_for
         from wyckoff_transformer.csp import CompositionRatio, candidates_to_pyxtal
 
         t = self.t
         ratio = CompositionRatio.for_formula(formula, t.tokenisers["elements"])
+        z = None if n_atoms is None else n_atoms // sum(ratio.unit_counts)
+        if t.condition_on_cell_size and z is None:
+            raise ValueError("a backbone conditioned on the cell size needs the atom count (--given_cell)")
+        z_cond = z if t.condition_on_cell_size else None
         scalar = None
         if condition_values is not None:
             scalar = t.transform_condition(t.build_condition_from_values(condition_values, 1, device=self.device))
@@ -127,14 +130,13 @@ class GeneSampler:
             # null-indicator column a guidance-trained model expects; the trainer appends it.
             from wyckoff_transformer.composition import composition_vector
 
-            comp = composition_vector(ratio.element_tokens, ratio.counts_at(1), t.n_elements, device=self.device,
-                                      condition_on_cell_size=False).unsqueeze(0)
+            comp = composition_vector(ratio.element_tokens, ratio.counts_at(z_cond or 1), t.n_elements,
+                                      device=self.device, condition_on_cell_size=t.condition_on_cell_size).unsqueeze(0)
             cond = t.with_null_indicator(torch.cat([p for p in (scalar, comp) if p is not None], dim=-1))
         else:
-            cond = build_condition_vector(t, ratio, None, scalar, self.device)
+            cond = build_condition_vector(t, ratio, z_cond, scalar, self.device)
         feasible = self._feasible(ratio)
-        if n_atoms is not None:
-            z = n_atoms // sum(ratio.unit_counts)
+        if z is not None:
             feasible = {sg: [z] for sg, zs in feasible.items() if z in zs}
         if not feasible:
             return [None] * n
@@ -222,6 +224,8 @@ def main():
 
     device = torch.device(a.device)
     trainer = load_trainer(device, wandb_run=a.wandb_run, wandb_entity=a.wandb_entity, wandb_project=a.wandb_project)
+    if trainer.condition_on_cell_size and not a.given_cell:
+        ap.error("the backbone is conditioned on the cell size, so it needs the atom count: pass --given_cell")
     features = list(trainer.condition_features)
     if features and features != ["formation_energy_per_atom"]:
         raise ValueError(f"no conditioning rule for {features}")
