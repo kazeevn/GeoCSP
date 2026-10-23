@@ -74,7 +74,7 @@ actually has to determine. The aggregate above hides three different regimes.
   the cell is free. Relaxation stays within 6 points of the generative models to DoF 2.
 - **Between DoF 4 and 8 the diffusion earns its keep.** `DiffCSP-Geo` achieves 97.7% at DoF 4-5 and 94.1% at DoF 6-8, beating `DiffCSP++` by 3.5 and 2.6 percentage points respectively.
 - **Above DoF 9 capacity and physical Euclidean geometry decide.** `DiffCSP-Geo` achieves 61.7% single-sample and **67.8%** with $M=3$ ORB ranking (vs 57.2% for `DiffCSP++`).
-- See full technical details and ablation studies in [`docs/diffcsp-geo-study.md`](../diffcsp-geo-study.md).
+- See full technical details and ablation studies in [`docs/archive/diffcsp-geo-study.md`](diffcsp-geo-study.md).
 
 DoF is the right axis for the full-cell regimes, but not for the asymmetric-unit models (`asymm-inno2`, archived in [`wyckoff-innovations-study.md`](wyckoff-innovations-study.md), and `wyckoff-painn`, archived in [`equivariant-painn-study.md`](equivariant-painn-study.md)): the asymmetric-unit deficit tracks Wyckoff *orbit multiplicity* instead, and vanishes on the structures where every orbit has one member. See [`docs/asymmetric-unit-deficit.md`](../asymmetric-unit-deficit.md) and `bench/multiplicity_analysis.py`.
 

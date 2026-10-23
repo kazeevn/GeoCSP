@@ -16,7 +16,7 @@
 | `e_eform_cfg` | [`ehoee5sa`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ehoee5sa) | `f580b0c` | all | `formation_energy_per_atom` | 0.2 (CFG) | 1e-3 | 40 |
 
 Model: DiffCSP-GeoV2, 512x6, EMA 0.9999 — the same architecture as the Alex-MP-20 run
-([`ua1g6od4`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ua1g6od4), commit `f9e3b3a`, 2026-09-29, 150 epochs, best val loss 0.3035 at epoch 140). On MP-20 (`561bb8f`, 2026-09-13, W&B [`say1phjr`](https://wandb.ai/symmetry-advantage/diffcsp/runs/say1phjr)), DiffCSP-GeoV2 reached a lower validation loss than DiffCSP-Geo (0.3936 vs 0.4057), 82.6% per-trial / 87.6% best-of-3 match rate single-sample (85.7% / 89.1% with $M=3$ ORB ranking), and lower clash rate (0.7% vs 1.5%) and cell-volume error (3.26% vs 3.90%); see [`docs/diffcsp-geo-study.md`](diffcsp-geo-study.md).
+([`ua1g6od4`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ua1g6od4), commit `f9e3b3a`, 2026-09-29, 150 epochs, best val loss 0.3035 at epoch 140). On MP-20 (`561bb8f`, 2026-09-13, W&B [`say1phjr`](https://wandb.ai/symmetry-advantage/diffcsp/runs/say1phjr)), DiffCSP-GeoV2 reached a lower validation loss than DiffCSP-Geo (0.3936 vs 0.4057), 82.6% per-trial / 87.6% best-of-3 match rate single-sample (85.7% / 89.1% with $M=3$ ORB ranking), and lower clash rate (0.7% vs 1.5%) and cell-volume error (3.26% vs 3.90%); see [`docs/archive/diffcsp-geo-study.md`](archive/diffcsp-geo-study.md).
 
 ## Data
 

@@ -1,5 +1,9 @@
 # DiffCSP-Geo & GeoV2: Cartesian-Aware, Symmetry-Projected Crystal Structure Prediction
 
+> **Archived 2026-10-23, not maintained.** Moved from `docs/diffcsp-geo-study.md` (file last
+> changed 2026-10-16 in `0b7640d`) because it records study results; only relative links were
+> updated. Later findings may supersede it.
+
 **Project:** DiffCSP++ Research & Engineering  
 **Dates:** 2026-09-13 to 2026-09-29  
 **Code:** commits `d7b1a7b` / `4d39843` (`DiffCSP-Geo`), `561bb8f` (`DiffCSP-GeoV2`, `DiffCSP-GeoOrb`, test-time ORB ranking), `9a4aa98` / `f9e3b3a` (Alex-MP-20 `GeoV2`).  
@@ -14,7 +18,7 @@
 
 ## 1. Executive Summary
 
-In previous investigations ([`docs/asymmetric-unit-deficit.md`](asymmetric-unit-deficit.md), [`docs/archive/equivariant-painn-study.md`](archive/equivariant-painn-study.md)), attempts to improve **DiffCSP++** focused on collapsing the $N$-atom conventional cell to the $K$-site asymmetric unit ($K \ll N$). While this reduced graph edges, it caused a severe match-rate deficit on high-DoF structures ($\text{DoF} \ge 6$) because collapsing orbit replicas discarded the distinct hidden states that the non-equivariant denoiser relies on, while finite-cutoff models (like PaiNN with 6 Å cutoff) starved on expanded initial cells.
+In previous investigations ([`docs/asymmetric-unit-deficit.md`](../asymmetric-unit-deficit.md), [`docs/archive/equivariant-painn-study.md`](equivariant-painn-study.md)), attempts to improve **DiffCSP++** focused on collapsing the $N$-atom conventional cell to the $K$-site asymmetric unit ($K \ll N$). While this reduced graph edges, it caused a severe match-rate deficit on high-DoF structures ($\text{DoF} \ge 6$) because collapsing orbit replicas discarded the distinct hidden states that the non-equivariant denoiser relies on, while finite-cutoff models (like PaiNN with 6 Å cutoff) starved on expanded initial cells.
 
 **DiffCSP-Geo** resolves this challenge by retaining the full-cell graph ($N$ atoms) while addressing the four fundamental architectural flaws of vanilla DiffCSP++:
 1. **Cartesian Metric Awareness (Curing Chemical Blindness)**: Extends fractional difference sinusoids $(x_j - x_i) \pmod 1$ with true Euclidean bond lengths $r_{ij} = \|\mathbf{L} \Delta \mathbf{x}_{ij, \text{mic}}\|_2$, 32-frequency Bessel radial basis functions ($r_{\text{cut}} = 8.0$ Å), and 3D unit direction vectors $\hat{\mathbf{r}}_{ij}$.
@@ -128,7 +132,7 @@ Two implementation choices in [`diffcsp/cli/train.py`](file:///home/kna/DiffCSPN
    - Optimization for `--model geo` used bare `torch.optim.Adam` without weight decay ($L_2 = 0$).
    - Without Exponential Moving Average (EMA) smoothing, late-stage weights tracked high-variance stochastic batch noise.
 
-*(Note: Stepping `ReduceLROnPlateau` on validation loss for legacy models and downscaling `GeoCSPNet` to 4M–6M parameters (`384x4`) on MP-20 remain untried ideas — see [`docs/ideas/training-and-capacity-refinements.md`](ideas/training-and-capacity-refinements.md).)*
+*(Note: Stepping `ReduceLROnPlateau` on validation loss for legacy models and downscaling `GeoCSPNet` to 4M–6M parameters (`384x4`) on MP-20 remain untried ideas — see [`docs/ideas/training-and-capacity-refinements.md`](../ideas/training-and-capacity-refinements.md).)*
 
 ---
 
@@ -163,7 +167,7 @@ Instead of modifying the denoiser or handing off early to local relaxation, `ben
 | **`diffcsp-geov2-rank3` ($M=3$ ORB rank)** | **85.66%** | **89.10%** | **64.77%** | **0.0316** | **0.5%** | 1.47% |
 
 ### 4.4 Scaling `DiffCSP-GeoV2` to Alex-MP-20 (W&B `ua1g6od4`)
-On 2026-09-29 (`9a4aa98` / `f9e3b3a`, `scripts/train_geov2_alex_mp20.sh`), `DiffCSP-GeoV2` (`512x6`, batch size 128, $\text{lr}=5\times 10^{-4}$, 150 epochs $\approx 712\text{k}$ steps) was trained on **Alex-MP-20** (607,683 train / 67,521 val structures with $\le 20$ atoms and $E_{\text{hull}} < 0.1\text{ eV}$). With $22\times$ more training structures than MP-20, the 12.28M model showed **zero overfitting** across all 150 epochs (W&B [`different-morning-75` / `ua1g6od4`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ua1g6od4)): validation loss decreased monotonically to **0.3035** at epoch 140 (train loss **0.2975**) and finished at **0.3058** at epoch 150. See [`docs/lemat-geov2-variants.md`](lemat-geov2-variants.md) for the subsequent 4-GPU LeMat-Bulk `GeoV2` runs.
+On 2026-09-29 (`9a4aa98` / `f9e3b3a`, `scripts/train_geov2_alex_mp20.sh`), `DiffCSP-GeoV2` (`512x6`, batch size 128, $\text{lr}=5\times 10^{-4}$, 150 epochs $\approx 712\text{k}$ steps) was trained on **Alex-MP-20** (607,683 train / 67,521 val structures with $\le 20$ atoms and $E_{\text{hull}} < 0.1\text{ eV}$). With $22\times$ more training structures than MP-20, the 12.28M model showed **zero overfitting** across all 150 epochs (W&B [`different-morning-75` / `ua1g6od4`](https://wandb.ai/symmetry-advantage/diffcsp/runs/ua1g6od4)): validation loss decreased monotonically to **0.3035** at epoch 140 (train loss **0.2975**) and finished at **0.3058** at epoch 150. See [`docs/lemat-geov2-variants.md`](../lemat-geov2-variants.md) for the subsequent 4-GPU LeMat-Bulk `GeoV2` runs.
 
 ---
 

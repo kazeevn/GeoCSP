@@ -1,6 +1,6 @@
 # Training & Capacity Refinements
 
-**Status:** Untried ideas (extracted from [`docs/training-stability.md`](../training-stability.md) and [`docs/diffcsp-geo-study.md`](../diffcsp-geo-study.md) §3.4).
+**Status:** Untried ideas (extracted from [`docs/training-stability.md`](../training-stability.md) and [`docs/archive/diffcsp-geo-study.md`](../archive/diffcsp-geo-study.md) §3.4).
 
 ---
 
@@ -44,7 +44,7 @@ Step `ReduceLROnPlateau` on `avg_val_loss` whenever validation runs (or migrate 
 ## 3. Compact Model Downscaling (4M–6M Parameters) on MP-20 Scale Datasets
 
 ### Background
-In [`docs/diffcsp-geo-study.md`](../diffcsp-geo-study.md) §3 (2026-09-13, W&B `7jdhrv2f`), the 12.28M-parameter `DiffCSP-Geo` (`hidden_dim=512, num_layers=6`) reached peak validation performance on MP-20 (~27,136 training structures, $\approx 455$ parameters per crystal) at epoch 320 ($\sim 68,000$ steps) and overfit thereafter. Similarly, `DiffCSP-GeoV2` (`say1phjr`, 400 epochs) peaked at epoch 300 (val loss $0.3936$ vs $0.4216$ at epoch 400).
+In [`docs/archive/diffcsp-geo-study.md`](../archive/diffcsp-geo-study.md) §3 (2026-09-13, W&B `7jdhrv2f`), the 12.28M-parameter `DiffCSP-Geo` (`hidden_dim=512, num_layers=6`) reached peak validation performance on MP-20 (~27,136 training structures, $\approx 455$ parameters per crystal) at epoch 320 ($\sim 68,000$ steps) and overfit thereafter. Similarly, `DiffCSP-GeoV2` (`say1phjr`, 400 epochs) peaked at epoch 300 (val loss $0.3936$ vs $0.4216$ at epoch 400).
 
 Because explicit Euclidean bond vectors, Bessel RBFs, and Lie-algebra tangent projections provide a strong physical inductive bias, the network no longer needs 12.28M parameters to implicitly reconstruct metric geometry on small datasets.
 

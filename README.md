@@ -5,7 +5,7 @@
 DiffCSP++ generates periodic crystal structures by diffusing atomic fractional coordinates on the 3-torus and lattice vectors on the Lie algebra $\mathfrak{gl}(3, \mathbb{R})$, enforcing exact space group symmetries by design. It supports both the original deep GNN denoiser (CSPNet) and a frozen pretrained Machine Learning Interatomic Potential backbone (ORB MLIP) with a lightweight adapter network.
 
 **Results and notes:** [`docs/benchmark.md`](docs/benchmark.md) for the structure-prediction
-benchmark protocols (their results are archived in [`docs/archive/`](docs/archive/)), [`docs/diffcsp-geo-study.md`](docs/diffcsp-geo-study.md) for `DiffCSP-Geo` and `DiffCSP-GeoV2` on MP-20 and Alex-MP-20, [`docs/lemat-geov2-variants.md`](docs/lemat-geov2-variants.md) for property-conditioned `GeoV2` on LeMat-Bulk, [`docs/asymmetric-unit-deficit.md`](docs/asymmetric-unit-deficit.md) for the asymmetric-unit orbit-collapse analysis, [`docs/training-stability.md`](docs/training-stability.md) for training-stability diagnostics, [`docs/ideas/`](docs/ideas/) for untried research proposals, and [`docs/archive/`](docs/archive/) for superseded studies.
+benchmark protocols (their results are archived in [`docs/archive/`](docs/archive/)), [`docs/archive/diffcsp-geo-study.md`](docs/archive/diffcsp-geo-study.md) for `DiffCSP-Geo` and `DiffCSP-GeoV2` on MP-20 and Alex-MP-20, [`docs/lemat-geov2-variants.md`](docs/lemat-geov2-variants.md) for property-conditioned `GeoV2` on LeMat-Bulk, [`docs/asymmetric-unit-deficit.md`](docs/asymmetric-unit-deficit.md) for the asymmetric-unit orbit-collapse analysis, [`docs/training-stability.md`](docs/training-stability.md) for training-stability diagnostics, [`docs/ideas/`](docs/ideas/) for untried research proposals, and [`docs/archive/`](docs/archive/) for superseded studies.
 
 ---
 
@@ -178,7 +178,7 @@ uv run diffcsp-train \
   --lr 5e-4 \
   --device cuda
 ```
-*(Note: 300 epochs / ~65k steps is the recommended budget on MP-20; due to strong inductive bias, peak validation loss occurs around epoch 320, while continuing to 500 epochs causes late-stage memorization. See [`docs/diffcsp-geo-study.md`](docs/diffcsp-geo-study.md).)*
+*(Note: 300 epochs / ~65k steps is the recommended budget on MP-20; due to strong inductive bias, peak validation loss occurs around epoch 320, while continuing to 500 epochs causes late-stage memorization. See [`docs/archive/diffcsp-geo-study.md`](docs/archive/diffcsp-geo-study.md).)*
 
 ### Train Standard DiffCSP++ (CSPNet):
 ```bash

@@ -12,7 +12,7 @@ However, as established in [`docs/asymmetric-unit-deficit.md`](../asymmetric-uni
 - Layer 1 is mathematically identical between full-cell and asymmetric-unit graphs ($6.1 \times 10^{-8}$ relative L2 difference).
 - Divergence begins at Layer 2 because every replica $j$ of an anchor $s(j)$ is assigned the same unrotated scalar hidden state $\mathbf{h}_j = \mathbf{h}_{s(j)}$, losing the $m$ distinct perspective states that full-cell CSPNet implicitly ensembles over.
 
-While full-cell [`DiffCSP-Geo`](../diffcsp-geo-study.md) and [`DiffCSP-GeoV2`](../lemat-geov2-variants.md) sidestepped this by keeping all $N$ atoms in the graph (requiring `--max_atoms 128` truncation on LeMat-Bulk), the following three untried ideas aim to recover full-cell high-DoF accuracy directly on the fast $K \times N$ asymmetric-unit graph.
+While full-cell [`DiffCSP-Geo`](../archive/diffcsp-geo-study.md) and [`DiffCSP-GeoV2`](../lemat-geov2-variants.md) sidestepped this by keeping all $N$ atoms in the graph (requiring `--max_atoms 128` truncation on LeMat-Bulk), the following three untried ideas aim to recover full-cell high-DoF accuracy directly on the fast $K \times N$ asymmetric-unit graph.
 
 ---
 

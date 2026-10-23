@@ -39,7 +39,7 @@ falling at the last measurement** (0.2902, epoch 20). The divergence between a c
 
 ## 2. Scheduler Trapping & Capacity Overfitting on MP-20 (`7jdhrv2f`, 2026-09-13)
 
-The complementary risk to LeMat's failure to decay the LR was observed on MP-20 during the 500-epoch `DiffCSP-Geo` training run (commit `d7b1a7b`, W&B [`expert-wood-72` / `7jdhrv2f`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f); see [`docs/diffcsp-geo-study.md`](diffcsp-geo-study.md)):
+The complementary risk to LeMat's failure to decay the LR was observed on MP-20 during the 500-epoch `DiffCSP-Geo` training run (commit `d7b1a7b`, W&B [`expert-wood-72` / `7jdhrv2f`](https://wandb.ai/symmetry-advantage/diffcsp/runs/7jdhrv2f); see [`docs/archive/diffcsp-geo-study.md`](archive/diffcsp-geo-study.md)):
 
 1. **Premature LR Decay from Stepping `ReduceLROnPlateau` on Train Loss:**
    Because `scheduler.step(avg_loss)` in [`diffcsp/cli/train.py`](../diffcsp/cli/train.py#L719) tracked training loss rather than validation loss, the scheduler interpreted the natural flattening of train loss around Epoch 300 as a plateau, sequentially dropping the LR: $5\times 10^{-4} \to 3\times 10^{-4} \to 1.8\times 10^{-4} \to 1.0\times 10^{-4}$.
